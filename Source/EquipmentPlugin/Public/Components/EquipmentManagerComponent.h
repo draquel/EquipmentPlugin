@@ -94,6 +94,24 @@ public:
 	bool CanEquipItem(const FItemInstance& Item) const;
 
 	// -----------------------------------------------------------------------
+	// GAS Integration (set by EquipmentGASIntegration module)
+	// -----------------------------------------------------------------------
+
+	/** Static factory delegate — set by EquipmentGASIntegration module's StartupModule() */
+	static EQUIPMENTPLUGIN_API TFunction<void(UEquipmentManagerComponent*)> GASSetupFactory;
+
+	/** GAS handler objects — stored to prevent GC, created by GASSetupFactory */
+	UPROPERTY()
+	TObjectPtr<UObject> GASAbilityGranter;
+
+	UPROPERTY()
+	TObjectPtr<UObject> GASEffectApplier;
+
+	/** GAS operation callbacks — bound by the GAS module, called by Internal_Equip/Unequip */
+	TFunction<void(const FItemInstance&, FGameplayTag)> OnGASEquipCallback;
+	TFunction<void(FGameplayTag)> OnGASUnequipCallback;
+
+	// -----------------------------------------------------------------------
 	// Extension Points
 	// -----------------------------------------------------------------------
 
@@ -179,6 +197,16 @@ private:
 
 	/** Find slot definition by tag */
 	const FEquipmentSlotDefinition* FindSlotDefinition(FGameplayTag SlotTag) const;
+
+	// -----------------------------------------------------------------------
+	// GAS Helpers
+	// -----------------------------------------------------------------------
+
+	/** Apply GAS abilities/effects for an equipped item (server-only, no-op if GAS not available) */
+	void ApplyGAS(const FItemInstance& Item, FGameplayTag SlotTag);
+
+	/** Remove GAS abilities/effects for a slot (server-only, no-op if GAS not available) */
+	void RemoveGAS(FGameplayTag SlotTag);
 
 	// -----------------------------------------------------------------------
 	// Visuals
