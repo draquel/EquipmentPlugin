@@ -98,7 +98,7 @@ public:
 	// -----------------------------------------------------------------------
 
 	/** Static factory delegate — set by EquipmentGASIntegration module's StartupModule() */
-	static EQUIPMENTPLUGIN_API TFunction<void(UEquipmentManagerComponent*)> GASSetupFactory;
+	static TFunction<void(UEquipmentManagerComponent*)> GASSetupFactory;
 
 	/** GAS handler objects — stored to prevent GC, created by GASSetupFactory */
 	UPROPERTY()
