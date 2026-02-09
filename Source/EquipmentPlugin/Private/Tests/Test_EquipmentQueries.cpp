@@ -8,10 +8,10 @@
 
 // ---------------------------------------------------------------------------
 // Helper: create an equipment manager with pre-allocated slots (no world needed)
+// Root objects to prevent GC collection during test execution.
 // ---------------------------------------------------------------------------
 namespace EquipmentTestHelpers
 {
-	// Ensure gameplay tags are available for tests
 	FGameplayTag RequestTestTag(const FName& TagName)
 	{
 		return FGameplayTag::RequestGameplayTag(TagName, false);
@@ -20,8 +20,8 @@ namespace EquipmentTestHelpers
 	UEquipmentManagerComponent* CreateTestEquipment(const TArray<FName>& SlotTagNames)
 	{
 		UEquipmentManagerComponent* Comp = NewObject<UEquipmentManagerComponent>();
+		Comp->AddToRoot();
 
-		// Directly populate the runtime EquipmentSlots array (bypasses BeginPlay)
 		for (const FName& TagName : SlotTagNames)
 		{
 			FEquipmentSlot Slot;
@@ -30,6 +30,11 @@ namespace EquipmentTestHelpers
 			Comp->EquipmentSlots.Add(Slot);
 		}
 		return Comp;
+	}
+
+	void CleanupEquipment(UEquipmentManagerComponent* Comp)
+	{
+		if (Comp) { Comp->RemoveFromRoot(); }
 	}
 
 	FItemInstance CreateTestItem(const FString& DefName = TEXT("TestItem"))
@@ -65,6 +70,8 @@ bool FEquipQuery_IsSlotOccupied_Empty::RunTest(const FString& Parameters)
 	FGameplayTag MainHand = EquipmentTestHelpers::RequestTestTag(TEXT("Equipment.MainHand"));
 
 	TestFalse("Empty slot not occupied", Comp->IsSlotOccupied(MainHand));
+
+	EquipmentTestHelpers::CleanupEquipment(Comp);
 	return true;
 }
 
@@ -80,6 +87,8 @@ bool FEquipQuery_IsSlotOccupied_Filled::RunTest(const FString& Parameters)
 	EquipmentTestHelpers::PlaceItemInSlot(Comp, EquipmentTestHelpers::CreateTestItem(TEXT("Sword")), 0);
 
 	TestTrue("Filled slot is occupied", Comp->IsSlotOccupied(MainHand));
+
+	EquipmentTestHelpers::CleanupEquipment(Comp);
 	return true;
 }
 
@@ -93,6 +102,8 @@ bool FEquipQuery_IsSlotOccupied_InvalidTag::RunTest(const FString& Parameters)
 	FGameplayTag Nonexistent = EquipmentTestHelpers::RequestTestTag(TEXT("Equipment.Nonexistent"));
 
 	TestFalse("Nonexistent tag returns false", Comp->IsSlotOccupied(Nonexistent));
+
+	EquipmentTestHelpers::CleanupEquipment(Comp);
 	return true;
 }
 
@@ -115,6 +126,8 @@ bool FEquipQuery_GetEquippedItem_Occupied::RunTest(const FString& Parameters)
 	FItemInstance Result = Comp->GetEquippedItem(MainHand);
 	TestTrue("Item is valid", Result.IsValid());
 	TestEqual("Instance ID matches", Result.InstanceId, Sword.InstanceId);
+
+	EquipmentTestHelpers::CleanupEquipment(Comp);
 	return true;
 }
 
@@ -129,6 +142,8 @@ bool FEquipQuery_GetEquippedItem_Empty::RunTest(const FString& Parameters)
 
 	FItemInstance Result = Comp->GetEquippedItem(MainHand);
 	TestFalse("Empty slot returns invalid item", Result.IsValid());
+
+	EquipmentTestHelpers::CleanupEquipment(Comp);
 	return true;
 }
 
@@ -155,6 +170,8 @@ bool FEquipQuery_GetOccupiedTags::RunTest(const FString& Parameters)
 
 	TArray<FGameplayTag> Occupied = Comp->GetOccupiedSlotTags();
 	TestEqual("2 occupied slots", Occupied.Num(), 2);
+
+	EquipmentTestHelpers::CleanupEquipment(Comp);
 	return true;
 }
 
@@ -175,6 +192,8 @@ bool FEquipQuery_GetEmptyTags::RunTest(const FString& Parameters)
 	EquipmentTestHelpers::PlaceItemInSlot(Comp, EquipmentTestHelpers::CreateTestItem(), 1);
 
 	TestEqual("2 empty slots after filling one", Comp->GetEmptySlotTags().Num(), 2);
+
+	EquipmentTestHelpers::CleanupEquipment(Comp);
 	return true;
 }
 
@@ -193,6 +212,8 @@ bool FEquipQuery_AllFilled::RunTest(const FString& Parameters)
 
 	TestEqual("All occupied", Comp->GetOccupiedSlotTags().Num(), 2);
 	TestEqual("None empty", Comp->GetEmptySlotTags().Num(), 0);
+
+	EquipmentTestHelpers::CleanupEquipment(Comp);
 	return true;
 }
 
@@ -212,6 +233,8 @@ bool FEquipQuery_NoSlots::RunTest(const FString& Parameters)
 	TestEqual("No empty", Comp->GetEmptySlotTags().Num(), 0);
 	TestFalse("Invalid tag not occupied", Comp->IsSlotOccupied(FGameplayTag()));
 	TestFalse("GetEquippedItem returns invalid", Comp->GetEquippedItem(FGameplayTag()).IsValid());
+
+	EquipmentTestHelpers::CleanupEquipment(Comp);
 	return true;
 }
 

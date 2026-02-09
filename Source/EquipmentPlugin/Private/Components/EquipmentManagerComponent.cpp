@@ -90,7 +90,7 @@ EEquipmentResult UEquipmentManagerComponent::TryEquipToSlot(const FItemInstance&
 		return ValidationResult;
 	}
 
-	if (!GetOwner()->HasAuthority())
+	if (GetOwner() && !GetOwner()->HasAuthority())
 	{
 		ServerRPC_RequestEquip(Item, SlotTag);
 		return EEquipmentResult::Success; // Optimistic
@@ -115,7 +115,7 @@ EEquipmentResult UEquipmentManagerComponent::TryUnequip(FGameplayTag SlotTag, FI
 		return EEquipmentResult::Failed;
 	}
 
-	if (!GetOwner()->HasAuthority())
+	if (GetOwner() && !GetOwner()->HasAuthority())
 	{
 		ServerRPC_RequestUnequip(SlotTag);
 		return EEquipmentResult::Success;
@@ -162,7 +162,7 @@ EEquipmentResult UEquipmentManagerComponent::TryEquipFromInventory(const FGuid& 
 		return ValidationResult;
 	}
 
-	if (!GetOwner()->HasAuthority())
+	if (GetOwner() && !GetOwner()->HasAuthority())
 	{
 		ServerRPC_RequestEquipFromInventory(ItemInstanceId, SourceInventory, SlotTag);
 		return EEquipmentResult::Success;
@@ -218,7 +218,7 @@ EEquipmentResult UEquipmentManagerComponent::TryUnequipToInventory(FGameplayTag 
 		return EEquipmentResult::NoInventorySpace;
 	}
 
-	if (!GetOwner()->HasAuthority())
+	if (GetOwner() && !GetOwner()->HasAuthority())
 	{
 		ServerRPC_RequestUnequipToInventory(SlotTag, TargetInventory);
 		return EEquipmentResult::Success;
@@ -751,7 +751,7 @@ USkeletalMeshComponent* UEquipmentManagerComponent::GetOwnerMesh() const
 void UEquipmentManagerComponent::ApplyGAS(const FItemInstance& Item, FGameplayTag SlotTag)
 {
 	// Server-only — ASC replication handles clients
-	if (!GetOwner()->HasAuthority())
+	if (GetOwner() && !GetOwner()->HasAuthority())
 	{
 		return;
 	}
@@ -764,7 +764,7 @@ void UEquipmentManagerComponent::ApplyGAS(const FItemInstance& Item, FGameplayTa
 
 void UEquipmentManagerComponent::RemoveGAS(FGameplayTag SlotTag)
 {
-	if (!GetOwner()->HasAuthority())
+	if (GetOwner() && !GetOwner()->HasAuthority())
 	{
 		return;
 	}
