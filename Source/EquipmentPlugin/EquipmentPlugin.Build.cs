@@ -19,6 +19,9 @@ public class EquipmentPlugin : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
 			"ItemInventoryPlugin",
+			"UMG",
+			"Slate",
+			"SlateCore",
 		});
 	}
 }
