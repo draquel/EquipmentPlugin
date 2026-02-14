@@ -4,10 +4,10 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "UI/EquipmentSlotWidget.h"
 #include "EquipmentPanelWidget.generated.h"
 
 class UEquipmentManagerComponent;
-class UEquipmentSlotWidget;
 class UBorder;
 class UVerticalBox;
 class UTextBlock;
@@ -50,6 +50,16 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EquipmentPanel|Style")
 	TSubclassOf<UEquipmentSlotWidget> SlotWidgetClass;
 
+	// --- Delegates ---
+
+	/** Fired when any child equipment slot is left-clicked. */
+	UPROPERTY(BlueprintAssignable, Category = "EquipmentPanel|Events")
+	FOnEquipmentSlotClicked OnSlotClicked;
+
+	/** Fired when any child equipment slot is right-clicked. */
+	UPROPERTY(BlueprintAssignable, Category = "EquipmentPanel|Events")
+	FOnEquipmentSlotClicked OnSlotRightClicked;
+
 	// --- API ---
 
 	/** Initialize the panel from an equipment manager's available slots. */
@@ -60,11 +70,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "EquipmentPanel")
 	void RefreshAllSlots();
 
+	/** Set or clear the held highlight on the slot matching the given tag. */
+	UFUNCTION(BlueprintCallable, Category = "EquipmentPanel")
+	void SetSlotHeld(FGameplayTag InSlotTag, bool bHeld);
+
 protected:
 	virtual void NativeOnInitialized() override;
 
 private:
 	void BuildWidgetTree();
+
+	UFUNCTION()
+	void HandleChildSlotClicked(FGameplayTag SlotTag, UEquipmentManagerComponent* EquipmentManager);
+
+	UFUNCTION()
+	void HandleChildSlotRightClicked(FGameplayTag SlotTag, UEquipmentManagerComponent* EquipmentManager);
 
 	UPROPERTY()
 	TObjectPtr<UBorder> RootBorder;

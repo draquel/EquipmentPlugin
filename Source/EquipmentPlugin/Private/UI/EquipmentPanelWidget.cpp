@@ -82,6 +82,8 @@ void UEquipmentPanelWidget::InitPanel(UEquipmentManagerComponent* InEquipmentMan
 		if (SlotWidget)
 		{
 			SlotWidget->InitSlot(BoundEquipmentManager, SlotDef.SlotTag);
+			SlotWidget->OnSlotClicked.AddDynamic(this, &UEquipmentPanelWidget::HandleChildSlotClicked);
+			SlotWidget->OnSlotRightClicked.AddDynamic(this, &UEquipmentPanelWidget::HandleChildSlotRightClicked);
 
 			UVerticalBoxSlot* VBSlot = SlotContainer->AddChildToVerticalBox(SlotWidget);
 			if (VBSlot)
@@ -104,4 +106,26 @@ void UEquipmentPanelWidget::RefreshAllSlots()
 			SlotWidget->RefreshSlot();
 		}
 	}
+}
+
+void UEquipmentPanelWidget::SetSlotHeld(FGameplayTag InSlotTag, bool bHeld)
+{
+	for (UEquipmentSlotWidget* SlotWidget : SlotWidgets)
+	{
+		if (SlotWidget && SlotWidget->GetSlotTag() == InSlotTag)
+		{
+			SlotWidget->SetHeld(bHeld);
+			return;
+		}
+	}
+}
+
+void UEquipmentPanelWidget::HandleChildSlotClicked(FGameplayTag SlotTag, UEquipmentManagerComponent* EquipmentManager)
+{
+	OnSlotClicked.Broadcast(SlotTag, EquipmentManager);
+}
+
+void UEquipmentPanelWidget::HandleChildSlotRightClicked(FGameplayTag SlotTag, UEquipmentManagerComponent* EquipmentManager)
+{
+	OnSlotRightClicked.Broadcast(SlotTag, EquipmentManager);
 }

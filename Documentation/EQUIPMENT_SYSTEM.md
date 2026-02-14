@@ -102,6 +102,48 @@ The inventory operations are atomic — validation before execution, rollback on
 
 ---
 
+## UI Widgets
+
+### EquipmentSlotWidget
+
+Single equipment slot display. Shows the equipped item icon (or empty placeholder) with a slot name label underneath (e.g., "Main Hand"). Created programmatically via `WidgetTree` in `NativeOnInitialized()`.
+
+**Click handling:** Overrides `NativeOnMouseButtonDown` to fire delegates:
+- Left-click → `OnSlotClicked.Broadcast(SlotTag, BoundEquipmentManager)`
+- Right-click → `OnSlotRightClicked.Broadcast(SlotTag, BoundEquipmentManager)`
+
+**Held highlight:** `SetHeld(bool)` toggles the background color between gold `(0.8, 0.6, 0.2, 0.9)` when held and default `(0.08, 0.08, 0.12, 0.9)` when not. Used by the click-to-move state machine in `AVCPlayerController`.
+
+**Icon visibility:** The `IconImage` starts `Collapsed`. `RefreshSlot()` sets it to `SelfHitTestInvisible` when an item is equipped (so clicks pass through to the slot widget) and back to `Collapsed` when the slot is empty.
+
+**Delegate type:** `FOnEquipmentSlotClicked(FGameplayTag SlotTag, UEquipmentManagerComponent* EquipmentManager)` — declared in `EquipmentSlotWidget.h`.
+
+### EquipmentPanelWidget
+
+Vertical panel showing all equipment slots. Creates child `UEquipmentSlotWidget` instances from the equipment manager's `AvailableSlots` in `InitPanel()`.
+
+**Delegate relay:** Binds each child slot's `OnSlotClicked`/`OnSlotRightClicked` to internal handlers that re-broadcast on the panel's own `OnSlotClicked`/`OnSlotRightClicked` delegates. This follows the same relay pattern used by `UHotbarWidget` and `UInventoryPanelWidget` in ItemInventoryPlugin.
+
+**SetSlotHeld(FGameplayTag, bool):** Finds the child widget matching the tag and calls `SetHeld()` on it. Used by the controller to highlight the grabbed slot.
+
+### Click-to-Move Integration
+
+The equipment panel integrates with `AVCPlayerController`'s click-to-move state machine. The controller binds to the panel's delegates in `BindSlotClickDelegates()` (called after both inventory and equipment panels are created in `ShowInventoryPanels()`).
+
+Supported interactions:
+
+| Source → Target | Operation |
+|-----------------|-----------|
+| Inventory → Equipment slot | `EquipMgr->TryEquipFromInventory(itemGuid, inventory, slotTag)` |
+| Equipment slot → Inventory | `EquipMgr->TryUnequipToInventory(slotTag, inventory)` + swap to clicked slot |
+| Equipment → Equipment | Cancel (not supported) |
+
+The unequip flow places the item in the first available inventory slot via `TryUnequipToInventory`, then swaps it to the player's clicked slot using `TrySwapSlots`. This gives the player precise control over where unequipped items land.
+
+See `VoxelCharacterPlugin/.claude/instructions.md` "Click-to-Move State Machine" for the full state machine description.
+
+---
+
 ## Visual Attachment
 
 ### Basic Attachment Flow

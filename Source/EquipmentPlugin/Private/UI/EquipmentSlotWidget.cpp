@@ -17,6 +17,7 @@
 #include "Engine/AssetManager.h"
 #include "Engine/Texture2D.h"
 #include "Blueprint/WidgetTree.h"
+#include "InputCoreTypes.h"
 
 void UEquipmentSlotWidget::NativeOnInitialized()
 {
@@ -154,6 +155,7 @@ void UEquipmentSlotWidget::RefreshSlot()
 	{
 		if (IconImage)
 		{
+			IconImage->SetVisibility(ESlateVisibility::Collapsed);
 			IconImage->SetBrush(EmptySlotBrush);
 		}
 		return;
@@ -182,6 +184,7 @@ void UEquipmentSlotWidget::RefreshSlot()
 		if (IconImage)
 		{
 			IconImage->SetBrushFromTexture(Def->Icon.Get());
+			IconImage->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		}
 	}
 	else
@@ -199,9 +202,44 @@ void UEquipmentSlotWidget::RefreshSlot()
 				if (IconImage && IconRef.IsValid())
 				{
 					IconImage->SetBrushFromTexture(IconRef.Get());
+					IconImage->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 				}
 			})
 		);
+	}
+}
+
+FReply UEquipmentSlotWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+	{
+		OnSlotClicked.Broadcast(SlotTag, BoundEquipmentManager);
+		return FReply::Handled();
+	}
+
+	if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
+	{
+		OnSlotRightClicked.Broadcast(SlotTag, BoundEquipmentManager);
+		return FReply::Handled();
+	}
+
+	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+void UEquipmentSlotWidget::SetHeld(bool bInHeld)
+{
+	bIsHeld = bInHeld;
+
+	if (BackgroundImage)
+	{
+		if (bIsHeld)
+		{
+			BackgroundImage->SetColorAndOpacity(FLinearColor(0.8f, 0.6f, 0.2f, 0.9f));
+		}
+		else
+		{
+			BackgroundImage->SetColorAndOpacity(FLinearColor(0.08f, 0.08f, 0.12f, 0.9f));
+		}
 	}
 }
 

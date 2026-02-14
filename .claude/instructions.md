@@ -33,6 +33,19 @@ EquipmentPlugin/
 
 Two modules: `EquipmentSystem` (no GAS dependency) and `EquipmentGASIntegration` (depends on GAS). Projects not using GAS only load EquipmentSystem. The split ensures compilation doesn't fail if GAS modules aren't present.
 
+### UI Widgets (in EquipmentPlugin/Source/EquipmentPlugin/)
+
+```
+Public/UI/
+├── EquipmentSlotWidget.h     ← Single slot display + click delegates + held highlight
+└── EquipmentPanelWidget.h    ← Vertical panel of slots, relays click delegates
+Private/UI/
+├── EquipmentSlotWidget.cpp
+└── EquipmentPanelWidget.cpp
+```
+
+Widget classes use programmatic `WidgetTree` construction (no UMG Designer). `EquipmentSlotWidget` fires `FOnEquipmentSlotClicked` delegates on click; `EquipmentPanelWidget` relays them. The click-to-move integration is handled by `AVCPlayerController` in VoxelCharacterPlugin. See `Documentation/EQUIPMENT_SYSTEM.md` "UI Widgets" section for details.
+
 ## Key Classes
 
 ### UEquipmentManagerComponent

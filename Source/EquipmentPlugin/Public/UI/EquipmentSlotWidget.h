@@ -15,6 +15,9 @@ class UOverlay;
 class UImage;
 class UTextBlock;
 
+/** Fired when an equipment slot is clicked. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEquipmentSlotClicked, FGameplayTag, SlotTag, UEquipmentManagerComponent*, EquipmentManager);
+
 /**
  * Single equipment slot display widget.
  *
@@ -41,6 +44,16 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EquipmentSlot|Style")
 	float SlotSize = 64.f;
 
+	// --- Delegates ---
+
+	/** Fired when this slot is left-clicked. */
+	UPROPERTY(BlueprintAssignable, Category = "EquipmentSlot|Events")
+	FOnEquipmentSlotClicked OnSlotClicked;
+
+	/** Fired when this slot is right-clicked. */
+	UPROPERTY(BlueprintAssignable, Category = "EquipmentSlot|Events")
+	FOnEquipmentSlotClicked OnSlotRightClicked;
+
 	// --- API ---
 
 	/** Bind this widget to an equipment manager and slot tag. */
@@ -55,9 +68,14 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "EquipmentSlot")
 	FGameplayTag GetSlotTag() const { return SlotTag; }
 
+	/** Set or clear the held (grabbed) highlight on this slot. */
+	UFUNCTION(BlueprintCallable, Category = "EquipmentSlot")
+	void SetHeld(bool bInHeld);
+
 protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativeDestruct() override;
+	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 
 private:
 	void BuildWidgetTree();
@@ -81,6 +99,8 @@ private:
 	TObjectPtr<UEquipmentManagerComponent> BoundEquipmentManager;
 
 	FGameplayTag SlotTag;
+
+	bool bIsHeld = false;
 
 	TSharedPtr<FStreamableHandle> IconLoadHandle;
 };
