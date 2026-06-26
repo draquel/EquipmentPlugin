@@ -1,6 +1,6 @@
 # EquipmentPlugin
 
-Equipment slot management with visual mesh attachment and Gameplay Ability System integration for Unreal Engine 5.7. Equip items, apply stats, grant abilities, and attach visible gear to characters.
+Equipment slot management with visual mesh attachment and Gameplay Ability System integration for Unreal Engine 5.8. Equip items, apply stats, grant abilities, and attach visible gear to characters.
 
 ## What This Plugin Does
 
@@ -33,7 +33,7 @@ Equipment works with ItemInventoryPlugin for equip-from-inventory and unequip-to
 
 ## Requirements
 
-- Unreal Engine 5.7
+- Unreal Engine 5.8
 - [CommonGameFramework](../CommonGameFramework/) plugin
 - GameplayAbilities plugin (enabled in .uproject)
 - [ItemInventoryPlugin](../ItemInventoryPlugin/) (optional — for inventory-backed equipment)
