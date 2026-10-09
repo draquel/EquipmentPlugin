@@ -41,16 +41,12 @@ void FEquipmentGASIntegrationModule::StartupModule()
 			Applier->ApplyEffects(Item, SlotTag, ASC);
 		};
 
-		// Bind unequip callback
+		// Bind unequip callback. A null ASC is passed through: the granter/applier fall back to the
+		// ASC they applied on, which matters when the owner is a pawn already unpossessed on its way
+		// to destruction (the player state's ASC outlives it).
 		Manager->OnGASUnequipCallback = [Granter, Applier, Manager](FGameplayTag SlotTag)
 		{
 			UAbilitySystemComponent* ASC = FEquipmentGASIntegrationModule::ResolveAbilitySystemComponent(Manager->GetOwner());
-
-			if (!ASC)
-			{
-				return;
-			}
-
 			Granter->RevokeAbilities(SlotTag, ASC);
 			Applier->RemoveEffects(SlotTag, ASC);
 		};

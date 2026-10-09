@@ -305,6 +305,17 @@ GE_IronHelm_Passive (GameplayEffect asset):
 
 When the Iron Helm is equipped, this effect is applied to the ASC. When unequipped, it's removed via the stored handle. The attribute values update automatically through GAS's modifier system.
 
+### Data-driven stats (no effect asset)
+
+`UItemFragment_Equipment::StatModifiers` (`TArray<FCGFAttributeModifier>`, e.g. Defense +2, MaxHealth +10) is applied by
+`UEquipmentEffectApplier` through **one** source-defined effect class configured in Project Settings > Plugins >
+Equipment GAS (`UEquipmentGASSettings::StatModifierEffectClass`). That class declares an additive SetByCaller modifier
+per supported attribute keyed `SetByCaller.Stat.<AttributeName>`; `UCGFGameplayEffectStatics::ApplyStatModifierEffect`
+zeroes every key and fills the requested ones, so unrequested stats are no-ops. The handle is tracked and removed on
+unequip like a passive effect. The game supplies the class because only it knows its attribute sets (VoxelCharacterPlugin
+ships `UVCEquipmentStatEffect`). A transient runtime effect is deliberately not used for lasting stats: active effects
+replicate to the owning client by definition reference, which a runtime object cannot satisfy.
+
 ---
 
 ## Multiplayer Flow

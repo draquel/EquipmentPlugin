@@ -15,6 +15,7 @@ public class EquipmentGASIntegration : ModuleRules
 			"GameplayAbilities",
 			"GameplayTasks",
 			"CommonGameFramework",
+			"DeveloperSettings",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]
