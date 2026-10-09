@@ -3,8 +3,17 @@
 #include "EquipmentAbilityGranter.h"
 #include "EquipmentEffectApplier.h"
 #include "AbilitySystemComponent.h"
+#include "AbilitySystemGlobals.h"
 
 #define LOCTEXT_NAMESPACE "FEquipmentGASIntegrationModule"
+
+UAbilitySystemComponent* FEquipmentGASIntegrationModule::ResolveAbilitySystemComponent(AActor* Owner)
+{
+	// IAbilitySystemInterface first: the ASC may live on another actor (e.g. the player state),
+	// where FindComponentByClass on the pawn finds nothing. LookForComponent keeps the old
+	// behaviour as a fallback for actors that just carry an ASC component.
+	return UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(Owner, /*LookForComponent*/ true);
+}
 
 void FEquipmentGASIntegrationModule::StartupModule()
 {
@@ -21,9 +30,7 @@ void FEquipmentGASIntegrationModule::StartupModule()
 		// Bind equip callback
 		Manager->OnGASEquipCallback = [Granter, Applier, Manager](const FItemInstance& Item, FGameplayTag SlotTag)
 		{
-			UAbilitySystemComponent* ASC = Manager->GetOwner()
-				? Manager->GetOwner()->FindComponentByClass<UAbilitySystemComponent>()
-				: nullptr;
+			UAbilitySystemComponent* ASC = FEquipmentGASIntegrationModule::ResolveAbilitySystemComponent(Manager->GetOwner());
 
 			if (!ASC)
 			{
@@ -37,9 +44,7 @@ void FEquipmentGASIntegrationModule::StartupModule()
 		// Bind unequip callback
 		Manager->OnGASUnequipCallback = [Granter, Applier, Manager](FGameplayTag SlotTag)
 		{
-			UAbilitySystemComponent* ASC = Manager->GetOwner()
-				? Manager->GetOwner()->FindComponentByClass<UAbilitySystemComponent>()
-				: nullptr;
+			UAbilitySystemComponent* ASC = FEquipmentGASIntegrationModule::ResolveAbilitySystemComponent(Manager->GetOwner());
 
 			if (!ASC)
 			{
