@@ -5,6 +5,8 @@
 #include "Data/ItemDefinition.h"
 #include "Data/Fragments/ItemFragment_Equipment.h"
 #include "Subsystems/ItemDatabaseSubsystem.h"
+#include "EquipmentGASSettings.h"
+#include "Utilities/CGFGameplayEffectStatics.h"
 
 void UEquipmentEffectApplier::ApplyEffects(const FItemInstance& Item, FGameplayTag SlotTag,
 	UAbilitySystemComponent* ASC)
@@ -35,6 +37,7 @@ void UEquipmentEffectApplier::ApplyEffects(const FItemInstance& Item, FGameplayT
 	}
 
 	TArray<FActiveGameplayEffectHandle>& Handles = AppliedEffectHandles.FindOrAdd(SlotTag);
+	AppliedOnASC.Add(SlotTag, ASC);
 
 	// Apply passive effects (tracked — removed on unequip)
 	for (const TSubclassOf<UGameplayEffect>& EffectClass : EquipFrag->PassiveEffects)
@@ -54,6 +57,24 @@ void UEquipmentEffectApplier::ApplyEffects(const FItemInstance& Item, FGameplayT
 			{
 				Handles.Add(Handle);
 			}
+		}
+	}
+
+	// Apply data-driven stat modifiers through the project's stat-modifier effect class (tracked)
+	if (EquipFrag->StatModifiers.Num() > 0)
+	{
+		const TSubclassOf<UGameplayEffect> StatEffectClass = UEquipmentGASSettings::ResolveStatModifierEffectClass();
+		if (StatEffectClass)
+		{
+			const FActiveGameplayEffectHandle Handle = UCGFGameplayEffectStatics::ApplyStatModifierEffect(ASC, StatEffectClass, EquipFrag->StatModifiers, Def);
+			if (Handle.IsValid())
+			{
+				Handles.Add(Handle);
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("EquipmentEffectApplier: %s has StatModifiers but no StatModifierEffectClass is configured (Project Settings > Plugins > Equipment GAS); stats not applied."), *Def->GetName());
 		}
 	}
 
@@ -79,6 +100,12 @@ void UEquipmentEffectApplier::RemoveEffects(FGameplayTag SlotTag, UAbilitySystem
 {
 	if (!ASC)
 	{
+		ASC = AppliedOnASC.FindRef(SlotTag).Get();
+	}
+	AppliedOnASC.Remove(SlotTag);
+	if (!ASC)
+	{
+		AppliedEffectHandles.Remove(SlotTag);
 		return;
 	}
 

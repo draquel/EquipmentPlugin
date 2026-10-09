@@ -227,6 +227,8 @@ public:
 };
 ```
 
+**Stat modifiers**: `UItemFragment_Equipment::StatModifiers` go through `UEquipmentGASSettings::StatModifierEffectClass` (Project Settings > Plugins > Equipment GAS; a SetByCaller.Stat.* effect the game provides) via `UCGFGameplayEffectStatics::ApplyStatModifierEffect`; handle tracked and removed on unequip. The ASC is resolved with `FEquipmentGASIntegrationModule::ResolveAbilitySystemComponent` (IAbilitySystemInterface-aware).
+
 **How the modules connect**: EquipmentManagerComponent checks at runtime if the GAS integration module is loaded. If yes, it creates a UEquipmentAbilityGranter and delegates ability/effect management to it. If no, it skips those steps. The check uses `FModuleManager::Get().IsModuleLoaded("EquipmentGASIntegration")`.
 
 **What the Equipment fragment on items provides for GAS:**

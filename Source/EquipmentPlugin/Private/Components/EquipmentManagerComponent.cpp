@@ -17,6 +17,24 @@ UEquipmentManagerComponent::UEquipmentManagerComponent()
 	SetIsReplicatedByDefault(true);
 }
 
+void UEquipmentManagerComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// The ability system this component granted to may outlive it (a player state's ASC survives
+	// the pawn's death). Revoke every slot's abilities and effects so a destroyed pawn does not
+	// leave its equipment stats behind on the next avatar.
+	if (OnGASUnequipCallback && GetOwner() && GetOwner()->HasAuthority())
+	{
+		for (const FEquipmentSlot& Slot : EquipmentSlots)
+		{
+			if (Slot.bIsOccupied)
+			{
+				OnGASUnequipCallback(Slot.SlotTag);
+			}
+		}
+	}
+	Super::EndPlay(EndPlayReason);
+}
+
 void UEquipmentManagerComponent::BeginPlay()
 {
 	Super::BeginPlay();

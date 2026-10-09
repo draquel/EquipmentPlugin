@@ -26,10 +26,17 @@ public:
 	 */
 	void ApplyEffects(const FItemInstance& Item, FGameplayTag SlotTag, UAbilitySystemComponent* ASC);
 
-	/** Remove all passive effects that were applied for this slot. */
+	/**
+	 * Remove all passive effects that were applied for this slot.
+	 * @param ASC Ability system to remove from; null = the one the slot was applied on (needed when the
+	 *            owner can no longer resolve its ASC, e.g. a pawn being destroyed after unpossession).
+	 */
 	void RemoveEffects(FGameplayTag SlotTag, UAbilitySystemComponent* ASC);
 
 private:
 	/** Active passive effect handles per slot for clean removal */
 	TMap<FGameplayTag, TArray<FActiveGameplayEffectHandle>> AppliedEffectHandles;
+
+	/** The ASC each slot's effects were applied on. */
+	TMap<FGameplayTag, TWeakObjectPtr<UAbilitySystemComponent>> AppliedOnASC;
 };

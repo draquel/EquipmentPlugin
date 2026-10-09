@@ -34,6 +34,7 @@ void UEquipmentAbilityGranter::GrantAbilities(const FItemInstance& Item, FGamepl
 	}
 
 	TArray<FGameplayAbilitySpecHandle>& Handles = GrantedAbilityHandles.FindOrAdd(SlotTag);
+	GrantedOnASC.Add(SlotTag, ASC);
 
 	for (const TSubclassOf<UGameplayAbility>& AbilityClass : EquipFrag->GrantedAbilities)
 	{
@@ -55,6 +56,12 @@ void UEquipmentAbilityGranter::RevokeAbilities(FGameplayTag SlotTag, UAbilitySys
 {
 	if (!ASC)
 	{
+		ASC = GrantedOnASC.FindRef(SlotTag).Get();
+	}
+	GrantedOnASC.Remove(SlotTag);
+	if (!ASC)
+	{
+		GrantedAbilityHandles.Remove(SlotTag);
 		return;
 	}
 
