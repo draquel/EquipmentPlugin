@@ -14,6 +14,10 @@ class UItemDatabaseSubsystem;
 class UItemFragment_Equipment;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEquipmentOperationFailed, EEquipmentResult, Result);
+/** An equipped item's durability changed (server on write, clients on replication). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnEquipmentDurabilityChanged, FGameplayTag, SlotTag, float, Current, float, Max);
+/** An equipped item hit zero durability with DestroyAtZero and was removed. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEquippedItemBroken, FGameplayTag, SlotTag, const FItemInstance&, Item);
 
 /**
  * Manages equipment slots on a character. Handles equip/unequip flow,
@@ -138,6 +142,34 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Equipment|Events")
 	FOnEquipmentOperationFailed OnOperationFailed;
+
+	UPROPERTY(BlueprintAssignable, Category = "Equipment|Events")
+	FOnEquipmentDurabilityChanged OnDurabilityChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Equipment|Events")
+	FOnEquippedItemBroken OnItemBroken;
+
+	// -----------------------------------------------------------------------
+	// Durability (feature 5: weapons wear down as they are used)
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Authority: reduce the equipped item's DurabilityState by Amount (clamped at 0). At zero with
+	 * the definition's bDestroyAtZero the item is removed (OnItemBroken); otherwise it stays
+	 * equipped at zero and consumers (the melee ability) read it as worn out.
+	 * @param SlotTag The slot whose item wears.
+	 * @param Amount  Durability points lost (the definition's DegradeRate per use, typically).
+	 * @return Remaining durability, or -1 when the slot is empty / the item has no durability.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Equipment|Durability")
+	float ApplyDurabilityLoss(FGameplayTag SlotTag, float Amount);
+
+	/**
+	 * Current / max durability of an equipped item.
+	 * @return False when the slot is empty or the item has no durability.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Equipment|Durability")
+	bool GetDurability(FGameplayTag SlotTag, float& OutCurrent, float& OutMax) const;
 
 protected:
 	virtual void BeginPlay() override;
