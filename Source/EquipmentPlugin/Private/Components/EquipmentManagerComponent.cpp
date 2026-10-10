@@ -3,6 +3,8 @@
 #include "Subsystems/ItemDatabaseSubsystem.h"
 #include "Data/ItemDefinition.h"
 #include "Data/Fragments/ItemFragment_Equipment.h"
+#include "Data/Fragments/ItemFragment_Durability.h"
+#include "Types/ItemInstanceFragments.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/AssetManager.h"
@@ -141,6 +143,66 @@ EEquipmentResult UEquipmentManagerComponent::TryUnequip(FGameplayTag SlotTag, FI
 
 	OutItem = Internal_Unequip(SlotTag);
 	return EEquipmentResult::Success;
+}
+
+// ===========================================================================
+// Durability
+// ===========================================================================
+
+bool UEquipmentManagerComponent::GetDurability(FGameplayTag SlotTag, float& OutCurrent, float& OutMax) const
+{
+	OutCurrent = 0.f;
+	OutMax = 0.f;
+	const FEquipmentSlot* Slot = FindSlot(SlotTag);
+	if (!Slot || !Slot->bIsOccupied)
+	{
+		return false;
+	}
+	const UInstanceFragment_DurabilityState* State = Slot->EquippedItem.FindFragment<UInstanceFragment_DurabilityState>();
+	UItemDatabaseSubsystem* DB = GetItemDatabase();
+	const UItemDefinition* Def = DB ? DB->GetDefinition(Slot->EquippedItem.ItemDefinitionId) : nullptr;
+	const UItemFragment_Durability* Durability = Def ? Def->FindFragment<UItemFragment_Durability>() : nullptr;
+	if (!State || !Durability)
+	{
+		return false;
+	}
+	OutCurrent = State->CurrentDurability;
+	OutMax = Durability->MaxDurability;
+	return true;
+}
+
+float UEquipmentManagerComponent::ApplyDurabilityLoss(FGameplayTag SlotTag, float Amount)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return -1.f;
+	}
+	FEquipmentSlot* Slot = FindSlot(SlotTag);
+	if (!Slot || !Slot->bIsOccupied)
+	{
+		return -1.f;
+	}
+	UInstanceFragment_DurabilityState* State = Slot->EquippedItem.FindFragment<UInstanceFragment_DurabilityState>();
+	UItemDatabaseSubsystem* DB = GetItemDatabase();
+	const UItemDefinition* Def = DB ? DB->GetDefinition(Slot->EquippedItem.ItemDefinitionId) : nullptr;
+	const UItemFragment_Durability* Durability = Def ? Def->FindFragment<UItemFragment_Durability>() : nullptr;
+	if (!State || !Durability)
+	{
+		return -1.f;
+	}
+
+	State->CurrentDurability = FMath::Clamp(State->CurrentDurability - FMath::Max(Amount, 0.f), 0.f, Durability->MaxDurability);
+	const float Remaining = State->CurrentDurability;
+	OnDurabilityChanged.Broadcast(SlotTag, Remaining, Durability->MaxDurability);
+
+	if (Remaining <= 0.f && Durability->bDestroyAtZero)
+	{
+		// Worn through: the item is gone, not returned to any inventory.
+		const FItemInstance Broken = Internal_Unequip(SlotTag);
+		OnItemBroken.Broadcast(SlotTag, Broken);
+		return 0.f;
+	}
+	return Remaining;
 }
 
 // ===========================================================================
