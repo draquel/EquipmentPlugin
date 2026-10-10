@@ -274,6 +274,10 @@ The EquipmentManagerComponent handles basic visual attachment:
 
 For more complex visual systems (modular character with mesh merging, material parameter changes, etc.), the `OnPostEquip` BlueprintNativeEvent is the extension point. Games override it to implement their specific visual logic.
 
+### Carried Light (feature 7)
+
+An equipped item whose definition carries `UItemFragment_LightSource` gets a `UPointLightComponent` hung off its held visual (`FEquipmentSlot::AttachedLightComponent`, every machine, built in `OnMeshLoaded` / `RefreshSlotLight`). Fuel is the item's Durability fragment: an authority timer (`TickFuel`, 1 s) accumulates burn time per lit slot and calls `ApplyDurabilityLoss` every `FuelStepSeconds`, so the replicated durability changes a few times a minute. At zero the light goes dark (`LitIntensityFor`), and with `bDestroyAtZero` the item burns out through the normal `OnItemBroken` path. A light item without a Durability fragment burns forever. Queries: `GetCarriedLightLevel()` (lumens / 1000, 0 = dark), `GetCarriedLight(Slot, Fuel, Max)`, authority `ConsumeCarriedLightFuel(Seconds)` (lighting a sconce). `OnCarriedLightChanged(Slot, bLit, Fuel, Max)` fires on every machine on equip / unequip / fuel change (HUD binds here). The character implements `ICGFLightBearerInterface` (CommonGameFramework) on top of these.
+
 ## Multiplayer
 
 Same pattern as InventoryComponent: server-authoritative with RPCs.

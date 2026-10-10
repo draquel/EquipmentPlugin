@@ -4,6 +4,10 @@
 #include "Data/ItemDefinition.h"
 #include "Data/Fragments/ItemFragment_Equipment.h"
 #include "Data/Fragments/ItemFragment_Durability.h"
+#include "Data/Fragments/ItemFragment_LightSource.h"
+#include "Components/PointLightComponent.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
 #include "Types/ItemInstanceFragments.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -34,6 +38,10 @@ void UEquipmentManagerComponent::EndPlay(const EEndPlayReason::Type EndPlayReaso
 			}
 		}
 	}
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(FuelTimerHandle);
+	}
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -57,6 +65,15 @@ void UEquipmentManagerComponent::BeginPlay()
 	if (GASSetupFactory)
 	{
 		GASSetupFactory(this);
+	}
+
+	// Carried lights burn fuel on the authority only; clients see it through the replicated durability.
+	if (GetOwner() && GetOwner()->HasAuthority())
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().SetTimer(FuelTimerHandle, this, &UEquipmentManagerComponent::TickFuel, FuelTimerInterval, true);
+		}
 	}
 }
 
@@ -82,6 +99,12 @@ void UEquipmentManagerComponent::OnRep_EquipmentSlots()
 		else if (!Slot.bIsOccupied && Slot.AttachedVisualComponent)
 		{
 			RemoveVisuals(Slot.SlotTag);
+		}
+		else if (Slot.bIsOccupied && Slot.AttachedLightComponent)
+		{
+			// Same item, possibly less fuel: the light and the HUD follow the replicated durability.
+			RefreshSlotLight(Slot);
+			NotifyCarriedLight(Slot);
 		}
 	}
 
@@ -201,6 +224,11 @@ float UEquipmentManagerComponent::ApplyDurabilityLoss(FGameplayTag SlotTag, floa
 		const FItemInstance Broken = Internal_Unequip(SlotTag);
 		OnItemBroken.Broadcast(SlotTag, Broken);
 		return 0.f;
+	}
+	if (Slot->AttachedLightComponent)
+	{
+		RefreshSlotLight(*Slot);
+		NotifyCarriedLight(*Slot);
 	}
 	return Remaining;
 }
@@ -604,6 +632,10 @@ void UEquipmentManagerComponent::Internal_Equip(const FItemInstance& Item, FGame
 	OnItemEquipped.Broadcast(Item, SlotTag);
 	OnEquipmentChanged.Broadcast();
 	OnPostEquip(Item, SlotTag);
+	if (GetLightSourceFragment(Item))
+	{
+		NotifyCarriedLight(*Slot);
+	}
 }
 
 FItemInstance UEquipmentManagerComponent::Internal_Unequip(FGameplayTag SlotTag)
@@ -615,16 +647,22 @@ FItemInstance UEquipmentManagerComponent::Internal_Unequip(FGameplayTag SlotTag)
 	}
 
 	FItemInstance UnequippedItem = Slot->EquippedItem;
+	const bool bWasLight = GetLightSourceFragment(UnequippedItem) != nullptr;
 
 	RemoveGAS(SlotTag);
 	RemoveVisuals(SlotTag);
 
 	Slot->EquippedItem = FItemInstance();
 	Slot->bIsOccupied = false;
+	Slot->FuelAccumulatorSeconds = 0.f;
 
 	OnItemUnequipped.Broadcast(UnequippedItem, SlotTag);
 	OnEquipmentChanged.Broadcast();
 	OnPostUnequip(UnequippedItem, SlotTag);
+	if (bWasLight)
+	{
+		NotifyCarriedLight(*Slot);
+	}
 
 	return UnequippedItem;
 }
@@ -777,6 +815,13 @@ void UEquipmentManagerComponent::OnMeshLoaded(FGameplayTag SlotTag)
 	{
 		OwnerMesh->LinkAnimClassLayers(EquipFrag->AnimLayerClass);
 	}
+
+	// A light source hangs its flame off the held visual (every machine).
+	RefreshSlotLight(*Slot);
+	if (Slot->AttachedLightComponent)
+	{
+		NotifyCarriedLight(*Slot);
+	}
 }
 
 void UEquipmentManagerComponent::RemoveVisuals(FGameplayTag SlotTag)
@@ -794,6 +839,11 @@ void UEquipmentManagerComponent::RemoveVisuals(FGameplayTag SlotTag)
 		Slot->MeshLoadHandle.Reset();
 	}
 
+	if (Slot->AttachedLightComponent)
+	{
+		Slot->AttachedLightComponent->DestroyComponent();
+		Slot->AttachedLightComponent = nullptr;
+	}
 	if (Slot->AttachedVisualComponent)
 	{
 		Slot->AttachedVisualComponent->DestroyComponent();
@@ -858,6 +908,178 @@ void UEquipmentManagerComponent::RemoveGAS(FGameplayTag SlotTag)
 // ===========================================================================
 // Helpers
 // ===========================================================================
+
+// ===========================================================================
+// Carried light (feature 7)
+// ===========================================================================
+
+float UEquipmentManagerComponent::LitIntensityFor(const UItemFragment_LightSource& Light, bool bHasFuelGauge, float FuelRemaining)
+{
+	// A light without a fuel gauge burns forever; one with a gauge goes dark at zero.
+	return (!bHasFuelGauge || FuelRemaining > 0.f) ? Light.Intensity : 0.f;
+}
+
+UItemFragment_LightSource* UEquipmentManagerComponent::GetLightSourceFragment(const FItemInstance& Item) const
+{
+	if (!Item.IsValid())
+	{
+		return nullptr;
+	}
+	UItemDatabaseSubsystem* DB = GetItemDatabase();
+	const UItemDefinition* Def = DB ? DB->GetDefinition(Item.ItemDefinitionId) : nullptr;
+	return Def ? Def->FindFragment<UItemFragment_LightSource>() : nullptr;
+}
+
+void UEquipmentManagerComponent::RefreshSlotLight(FEquipmentSlot& Slot)
+{
+	UItemFragment_LightSource* Light = Slot.bIsOccupied ? GetLightSourceFragment(Slot.EquippedItem) : nullptr;
+	if (!Light)
+	{
+		if (Slot.AttachedLightComponent)
+		{
+			Slot.AttachedLightComponent->DestroyComponent();
+			Slot.AttachedLightComponent = nullptr;
+		}
+		return;
+	}
+
+	USceneComponent* Parent = Slot.AttachedVisualComponent ? Slot.AttachedVisualComponent.Get() : static_cast<USceneComponent*>(GetOwnerMesh());
+	if (!Parent)
+	{
+		return;
+	}
+	if (!Slot.AttachedLightComponent)
+	{
+		UPointLightComponent* Flame = NewObject<UPointLightComponent>(GetOwner());
+		Flame->SetMobility(EComponentMobility::Movable);
+		Flame->bUseInverseSquaredFalloff = false;
+		Flame->SetCastShadows(Light->bCastShadows);
+		Flame->SetLightColor(Light->Color);
+		Flame->SetAttenuationRadius(Light->AttenuationRadius);
+		Flame->SetIntensityUnits(ELightUnits::Lumens);
+		// Hang off the held visual when there is one, else the hand socket itself.
+		Flame->AttachToComponent(Parent, FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+			Slot.AttachedVisualComponent ? NAME_None : Slot.AttachSocket);
+		Flame->SetRelativeLocation(Light->LightOffset);
+		Flame->RegisterComponent();
+		Slot.AttachedLightComponent = Flame;
+	}
+
+	float Fuel = 0.f, MaxFuel = 0.f;
+	const bool bHasGauge = GetDurability(Slot.SlotTag, Fuel, MaxFuel);
+	const float Intensity = LitIntensityFor(*Light, bHasGauge, Fuel);
+	Slot.AttachedLightComponent->SetIntensity(Intensity);
+	Slot.AttachedLightComponent->SetVisibility(Intensity > 0.f);
+}
+
+void UEquipmentManagerComponent::NotifyCarriedLight(const FEquipmentSlot& Slot)
+{
+	float Fuel = 0.f, MaxFuel = 0.f;
+	const UItemFragment_LightSource* Light = Slot.bIsOccupied ? GetLightSourceFragment(Slot.EquippedItem) : nullptr;
+	bool bLit = false;
+	if (Light)
+	{
+		const bool bHasGauge = GetDurability(Slot.SlotTag, Fuel, MaxFuel);
+		bLit = LitIntensityFor(*Light, bHasGauge, Fuel) > 0.f;
+	}
+	OnCarriedLightChanged.Broadcast(Slot.SlotTag, bLit, Fuel, MaxFuel);
+}
+
+bool UEquipmentManagerComponent::GetCarriedLight(FGameplayTag& OutSlotTag, float& OutFuel, float& OutMaxFuel) const
+{
+	OutSlotTag = FGameplayTag();
+	OutFuel = 0.f;
+	OutMaxFuel = 0.f;
+	float Best = 0.f;
+	for (const FEquipmentSlot& Slot : EquipmentSlots)
+	{
+		const UItemFragment_LightSource* Light = Slot.bIsOccupied ? GetLightSourceFragment(Slot.EquippedItem) : nullptr;
+		if (!Light)
+		{
+			continue;
+		}
+		float Fuel = 0.f, MaxFuel = 0.f;
+		const bool bHasGauge = GetDurability(Slot.SlotTag, Fuel, MaxFuel);
+		const float Intensity = LitIntensityFor(*Light, bHasGauge, Fuel);
+		if (Intensity > Best)
+		{
+			Best = Intensity;
+			OutSlotTag = Slot.SlotTag;
+			OutFuel = Fuel;
+			OutMaxFuel = MaxFuel;
+		}
+	}
+	return Best > 0.f;
+}
+
+float UEquipmentManagerComponent::GetCarriedLightLevel() const
+{
+	float Best = 0.f;
+	for (const FEquipmentSlot& Slot : EquipmentSlots)
+	{
+		const UItemFragment_LightSource* Light = Slot.bIsOccupied ? GetLightSourceFragment(Slot.EquippedItem) : nullptr;
+		if (!Light)
+		{
+			continue;
+		}
+		float Fuel = 0.f, MaxFuel = 0.f;
+		const bool bHasGauge = GetDurability(Slot.SlotTag, Fuel, MaxFuel);
+		Best = FMath::Max(Best, LitIntensityFor(*Light, bHasGauge, Fuel) / 1000.f);
+	}
+	return Best;
+}
+
+bool UEquipmentManagerComponent::ConsumeCarriedLightFuel(float Seconds)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority() || Seconds <= 0.f)
+	{
+		return false;
+	}
+	FGameplayTag SlotTag;
+	float Fuel = 0.f, MaxFuel = 0.f;
+	if (!GetCarriedLight(SlotTag, Fuel, MaxFuel) || MaxFuel <= 0.f)
+	{
+		return false; // nothing lit, or a light that needs no fuel
+	}
+	const FEquipmentSlot* Slot = FindSlot(SlotTag);
+	const UItemFragment_LightSource* Light = Slot ? GetLightSourceFragment(Slot->EquippedItem) : nullptr;
+	const float Burn = Light ? Light->FuelBurnPerSecond : 1.f;
+	ApplyDurabilityLoss(SlotTag, Seconds * Burn);
+	return true;
+}
+
+void UEquipmentManagerComponent::TickFuel()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+	// Collect first: ApplyDurabilityLoss may unequip (burn-out) and touch the slot array.
+	TArray<TPair<FGameplayTag, float>> Deductions;
+	for (FEquipmentSlot& Slot : EquipmentSlots)
+	{
+		const UItemFragment_LightSource* Light = Slot.bIsOccupied ? GetLightSourceFragment(Slot.EquippedItem) : nullptr;
+		if (!Light || Light->FuelBurnPerSecond <= 0.f)
+		{
+			continue;
+		}
+		float Fuel = 0.f, MaxFuel = 0.f;
+		if (!GetDurability(Slot.SlotTag, Fuel, MaxFuel) || Fuel <= 0.f)
+		{
+			continue; // no gauge (burns forever) or already out
+		}
+		Slot.FuelAccumulatorSeconds += FuelTimerInterval;
+		if (Slot.FuelAccumulatorSeconds + KINDA_SMALL_NUMBER >= Light->FuelStepSeconds)
+		{
+			Deductions.Emplace(Slot.SlotTag, Slot.FuelAccumulatorSeconds * Light->FuelBurnPerSecond);
+			Slot.FuelAccumulatorSeconds = 0.f;
+		}
+	}
+	for (const TPair<FGameplayTag, float>& Deduction : Deductions)
+	{
+		ApplyDurabilityLoss(Deduction.Key, Deduction.Value);
+	}
+}
 
 UItemDatabaseSubsystem* UEquipmentManagerComponent::GetItemDatabase() const
 {
