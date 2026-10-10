@@ -7,6 +7,8 @@
 #include "Engine/StreamableManager.h"
 #include "EquipmentSystemTypes.generated.h"
 
+class UPointLightComponent;
+
 /**
  * Runtime equipment slot — holds the currently equipped item and visual state.
  * Created from FEquipmentSlotDefinition during BeginPlay.
@@ -46,4 +48,11 @@ struct EQUIPMENTPLUGIN_API FEquipmentSlot
 
 	/** Async mesh load handle */
 	TSharedPtr<FStreamableHandle> MeshLoadHandle;
+
+	/** Carried light (feature 7): present while a LightSource item is equipped; intensity follows the fuel. */
+	UPROPERTY(NotReplicated)
+	TObjectPtr<UPointLightComponent> AttachedLightComponent;
+
+	/** Seconds of burn not yet deducted from the fuel (authority; see UItemFragment_LightSource::FuelStepSeconds). */
+	float FuelAccumulatorSeconds = 0.0f;
 };
