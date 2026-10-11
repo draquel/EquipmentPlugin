@@ -13,6 +13,23 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/AssetManager.h"
 #include "Net/UnrealNetwork.h"
+#include "Engine/CollisionProfile.h"
+
+namespace
+{
+	/**
+	 * Equipment visuals are cosmetic: they must never collide. A new mesh component defaults to BlockAllDynamic,
+	 * and the item meshes carry simple collision (pipeline policy auto_box), so an equipped sword, helmet or chest
+	 * piece used to block everything while riding the owner's bones. When the owner ragdolled on death its physics
+	 * bodies started inside them, the solver launched the body, and it tunnelled through the terrain (QA F1-04).
+	 */
+	void DisableVisualCollision(UPrimitiveComponent* Visual)
+	{
+		Visual->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
+		Visual->SetGenerateOverlapEvents(false);
+		Visual->SetCanEverAffectNavigation(false);
+	}
+}
 
 // Static factory delegate — set by EquipmentGASIntegration module
 TFunction<void(UEquipmentManagerComponent*)> UEquipmentManagerComponent::GASSetupFactory;
@@ -792,6 +809,7 @@ void UEquipmentManagerComponent::OnMeshLoaded(FGameplayTag SlotTag)
 		{
 			USkeletalMeshComponent* SkelComp = NewObject<USkeletalMeshComponent>(GetOwner());
 			SkelComp->SetSkeletalMesh(SkelMesh);
+			DisableVisualCollision(SkelComp);
 			SkelComp->AttachToComponent(OwnerMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, Socket);
 			SkelComp->RegisterComponent();
 			Slot->AttachedVisualComponent = SkelComp;
@@ -804,6 +822,7 @@ void UEquipmentManagerComponent::OnMeshLoaded(FGameplayTag SlotTag)
 		{
 			UStaticMeshComponent* StaticComp = NewObject<UStaticMeshComponent>(GetOwner());
 			StaticComp->SetStaticMesh(StaticMesh);
+			DisableVisualCollision(StaticComp);
 			StaticComp->AttachToComponent(OwnerMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, Socket);
 			StaticComp->RegisterComponent();
 			Slot->AttachedVisualComponent = StaticComp;

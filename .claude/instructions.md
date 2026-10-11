@@ -180,7 +180,9 @@ struct FEquipmentSlot
 3. Execute:
    a. If slot is occupied, unequip current item first (put back in inventory or drop)
    b. Set the item in the equipment slot
-   c. Read the Equipment fragment for visual mesh data → spawn and attach to socket
+   c. Read the Equipment fragment for visual mesh data → spawn and attach to socket. Visual components are
+      created with collision OFF (NoCollision, no overlaps): they are cosmetic, and colliding visuals on the bones
+      launched the owner's death ragdoll through the terrain (QA F1-04).
    d. If GAS integration module is loaded: grant abilities, apply effects
    e. Fire OnItemEquipped delegate
 
