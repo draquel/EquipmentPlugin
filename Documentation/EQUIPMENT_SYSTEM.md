@@ -161,8 +161,17 @@ ApplyVisuals(Item, SlotTag):
        a. Create mesh component (UStaticMeshComponent or USkeletalMeshComponent)
        b. Get AttachSocket from FEquipmentSlotDefinition
        c. AttachToComponent(OwnerMesh, AttachSocket)
-       d. Store component reference in FEquipmentSlot.AttachedVisualComponent
+       d. SetRelativeTransform(GetVisualAttachOffset(SlotTag))
+       e. Store component reference in FEquipmentSlot.AttachedVisualComponent
 ```
+
+**Attach offsets.** The visual sits at `ItemFit * SlotOffset` relative to the socket
+(`GetVisualAttachOffset`). `FEquipmentSlotDefinition::AttachOffset` is the slot's skeleton correction: mannequin head and
+spine bones point X up the chain with Y forward, while item meshes are authored Z-up with +X forward, so the character
+sets a rotation (and a lift for the helmet rim) per slot. `UItemFragment_Equipment::AttachOffset` is the per-item fit
+on top of it (the leather armour scales up a little). Owners that re-attach visuals themselves, such as a first-person
+socket swap, re-apply `GetVisualAttachOffset` after attaching. `SetSlotAttachOffset` changes a slot's correction at
+runtime and re-applies it, which is how the offsets were tuned in PIE.
 
 ```
 RemoveVisuals(SlotTag):

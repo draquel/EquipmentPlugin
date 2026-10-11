@@ -14,6 +14,7 @@ class UVerticalBox;
 class UOverlay;
 class UImage;
 class UTextBlock;
+class UItemTooltipWidget;
 
 /** Fired when an equipment slot is clicked. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEquipmentSlotClicked, FGameplayTag, SlotTag, UEquipmentManagerComponent*, EquipmentManager);
@@ -82,6 +83,14 @@ private:
 
 	UFUNCTION()
 	void HandleEquipmentChanged();
+
+	/** A slot's durability changed (a weapon wore down, a torch burned): refresh the tooltip's durability / fuel. */
+	UFUNCTION()
+	void HandleDurabilityChanged(FGameplayTag ChangedSlot, float NewDurability, float MaxDurability);
+
+	/** Hover tooltip for the equipped item (created on first use, refreshed with the slot). */
+	UPROPERTY()
+	TObjectPtr<UItemTooltipWidget> ItemTooltip;
 
 	UPROPERTY()
 	TObjectPtr<USizeBox> RootSizeBox;

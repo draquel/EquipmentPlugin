@@ -6,6 +6,7 @@
 #include "Types/CGFItemTypes.h"
 #include "Data/ItemDefinition.h"
 #include "Subsystems/ItemDatabaseSubsystem.h"
+#include "UI/ItemTooltipWidget.h"
 #include "Components/SizeBox.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
@@ -30,6 +31,7 @@ void UEquipmentSlotWidget::NativeDestruct()
 	if (BoundEquipmentManager)
 	{
 		BoundEquipmentManager->OnEquipmentChanged.RemoveDynamic(this, &UEquipmentSlotWidget::HandleEquipmentChanged);
+		BoundEquipmentManager->OnDurabilityChanged.RemoveDynamic(this, &UEquipmentSlotWidget::HandleDurabilityChanged);
 	}
 
 	if (IconLoadHandle.IsValid())
@@ -112,6 +114,7 @@ void UEquipmentSlotWidget::InitSlot(UEquipmentManagerComponent* InEquipmentManag
 	if (BoundEquipmentManager)
 	{
 		BoundEquipmentManager->OnEquipmentChanged.RemoveDynamic(this, &UEquipmentSlotWidget::HandleEquipmentChanged);
+		BoundEquipmentManager->OnDurabilityChanged.RemoveDynamic(this, &UEquipmentSlotWidget::HandleDurabilityChanged);
 	}
 
 	BoundEquipmentManager = InEquipmentManager;
@@ -121,6 +124,7 @@ void UEquipmentSlotWidget::InitSlot(UEquipmentManagerComponent* InEquipmentManag
 	if (BoundEquipmentManager)
 	{
 		BoundEquipmentManager->OnEquipmentChanged.AddDynamic(this, &UEquipmentSlotWidget::HandleEquipmentChanged);
+		BoundEquipmentManager->OnDurabilityChanged.AddDynamic(this, &UEquipmentSlotWidget::HandleDurabilityChanged);
 	}
 
 	// Set slot display name from definition
@@ -158,6 +162,7 @@ void UEquipmentSlotWidget::RefreshSlot()
 			IconImage->SetVisibility(ESlateVisibility::Collapsed);
 			IconImage->SetBrush(EmptySlotBrush);
 		}
+		SetToolTip(nullptr);
 		return;
 	}
 
@@ -174,6 +179,25 @@ void UEquipmentSlotWidget::RefreshSlot()
 	}
 
 	const UItemDefinition* Def = ItemDB->GetDefinition(EquippedItem.ItemDefinitionId);
+
+	// Hover tooltip: name, stats, durability / fuel (the equipped weapon's wear is only visible here).
+	if (Def)
+	{
+		if (!ItemTooltip)
+		{
+			ItemTooltip = CreateWidget<UItemTooltipWidget>(this, UItemTooltipWidget::StaticClass());
+		}
+		if (ItemTooltip)
+		{
+			ItemTooltip->SetItem(Def, EquippedItem);
+			SetToolTip(ItemTooltip);
+		}
+	}
+	else
+	{
+		SetToolTip(nullptr);
+	}
+
 	if (!Def || Def->Icon.IsNull())
 	{
 		return;
@@ -246,4 +270,12 @@ void UEquipmentSlotWidget::SetHeld(bool bInHeld)
 void UEquipmentSlotWidget::HandleEquipmentChanged()
 {
 	RefreshSlot();
+}
+
+void UEquipmentSlotWidget::HandleDurabilityChanged(FGameplayTag ChangedSlot, float /*NewDurability*/, float /*MaxDurability*/)
+{
+	if (ChangedSlot == SlotTag)
+	{
+		RefreshSlot();
+	}
 }
