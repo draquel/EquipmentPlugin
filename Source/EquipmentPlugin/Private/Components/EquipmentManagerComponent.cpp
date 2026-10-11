@@ -73,6 +73,7 @@ void UEquipmentManagerComponent::BeginPlay()
 		FEquipmentSlot Slot;
 		Slot.SlotTag = Def.SlotTag;
 		Slot.AttachSocket = Def.AttachSocket;
+		Slot.AttachOffset = Def.AttachOffset;
 		Slot.AcceptedItemTags = Def.AcceptedItemTags;
 		Slot.bIsOccupied = false;
 		EquipmentSlots.Add(Slot);
@@ -829,6 +830,13 @@ void UEquipmentManagerComponent::OnMeshLoaded(FGameplayTag SlotTag)
 		}
 	}
 
+	// Snap to the socket, then sit the mesh properly: item meshes are authored Z-up / +X forward, bones point along
+	// the chain (QA F2-06: a helmet lay on its side at the neck, the chest piece was turned).
+	if (Slot->AttachedVisualComponent)
+	{
+		Slot->AttachedVisualComponent->SetRelativeTransform(GetVisualAttachOffset(SlotTag));
+	}
+
 	// Animation layer support
 	if (EquipFrag->AnimLayerClass)
 	{
@@ -840,6 +848,32 @@ void UEquipmentManagerComponent::OnMeshLoaded(FGameplayTag SlotTag)
 	if (Slot->AttachedLightComponent)
 	{
 		NotifyCarriedLight(*Slot);
+	}
+}
+
+FTransform UEquipmentManagerComponent::GetVisualAttachOffset(FGameplayTag SlotTag) const
+{
+	const FEquipmentSlot* Slot = EquipmentSlots.FindByPredicate([&SlotTag](const FEquipmentSlot& S) { return S.SlotTag == SlotTag; });
+	if (!Slot)
+	{
+		return FTransform::Identity;
+	}
+	const UItemFragment_Equipment* EquipFrag = Slot->bIsOccupied ? GetEquipmentFragment(Slot->EquippedItem) : nullptr;
+	// Item fit first (expressed in the corrected frame), then the slot's skeleton correction.
+	return EquipFrag ? EquipFrag->AttachOffset * Slot->AttachOffset : Slot->AttachOffset;
+}
+
+void UEquipmentManagerComponent::SetSlotAttachOffset(FGameplayTag SlotTag, const FTransform& Offset)
+{
+	FEquipmentSlot* Slot = FindSlot(SlotTag);
+	if (!Slot)
+	{
+		return;
+	}
+	Slot->AttachOffset = Offset;
+	if (Slot->AttachedVisualComponent)
+	{
+		Slot->AttachedVisualComponent->SetRelativeTransform(GetVisualAttachOffset(SlotTag));
 	}
 }
 

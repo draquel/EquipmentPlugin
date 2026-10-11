@@ -181,6 +181,23 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Equipment|Durability")
 	bool GetDurability(FGameplayTag SlotTag, float& OutCurrent, float& OutMax) const;
 
+	/**
+	 * Where a slot's visual sits relative to its socket: the item's fit composed with the slot's skeleton correction.
+	 * Owners that re-attach visuals themselves (view-mode socket swaps) apply this after attaching.
+	 * @param SlotTag The slot
+	 * @return The relative transform (identity for an unknown or empty slot)
+	 */
+	UFUNCTION(BlueprintPure, Category = "Equipment|Visuals")
+	FTransform GetVisualAttachOffset(FGameplayTag SlotTag) const;
+
+	/**
+	 * Change a slot's skeleton correction at runtime and re-apply it to the equipped visual (tuning, or a body swap).
+	 * @param SlotTag The slot
+	 * @param Offset  New transform relative to the socket
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Equipment|Visuals")
+	void SetSlotAttachOffset(FGameplayTag SlotTag, const FTransform& Offset);
+
 	// -----------------------------------------------------------------------
 	// Carried light (feature 7: items with a LightSource fragment light up while equipped)
 	// -----------------------------------------------------------------------

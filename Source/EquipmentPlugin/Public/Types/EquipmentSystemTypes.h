@@ -34,6 +34,10 @@ struct EQUIPMENTPLUGIN_API FEquipmentSlot
 	UPROPERTY()
 	FName AttachSocket;
 
+	/** Visual offset relative to the socket (from FEquipmentSlotDefinition::AttachOffset). */
+	UPROPERTY()
+	FTransform AttachOffset = FTransform::Identity;
+
 	/** Tags this slot accepts (copied from slot definition) */
 	UPROPERTY()
 	FGameplayTagContainer AcceptedItemTags;
