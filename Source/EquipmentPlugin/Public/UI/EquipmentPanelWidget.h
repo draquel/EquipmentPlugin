@@ -60,6 +60,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "EquipmentPanel|Events")
 	FOnEquipmentSlotClicked OnSlotRightClicked;
 
+	/** Fired when any child equipment slot is double-clicked. */
+	UPROPERTY(BlueprintAssignable, Category = "EquipmentPanel|Events")
+	FOnEquipmentSlotClicked OnSlotDoubleClicked;
+
 	// --- API ---
 
 	/** Initialize the panel from an equipment manager's available slots. */
@@ -85,6 +89,9 @@ private:
 
 	UFUNCTION()
 	void HandleChildSlotRightClicked(FGameplayTag SlotTag, UEquipmentManagerComponent* EquipmentManager);
+
+	UFUNCTION()
+	void HandleChildSlotDoubleClicked(FGameplayTag SlotTag, UEquipmentManagerComponent* EquipmentManager);
 
 	UPROPERTY()
 	TObjectPtr<UBorder> RootBorder;

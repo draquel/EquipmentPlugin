@@ -55,6 +55,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "EquipmentSlot|Events")
 	FOnEquipmentSlotClicked OnSlotRightClicked;
 
+	/** Fired when this slot is double-clicked with the left button (unequip it; QA R18). */
+	UPROPERTY(BlueprintAssignable, Category = "EquipmentSlot|Events")
+	FOnEquipmentSlotClicked OnSlotDoubleClicked;
+
 	// --- API ---
 
 	/** Bind this widget to an equipment manager and slot tag. */
@@ -77,6 +81,7 @@ protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativeDestruct() override;
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnMouseButtonDoubleClick(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 
 private:
 	void BuildWidgetTree();
