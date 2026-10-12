@@ -25,6 +25,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEquippedItemBroken, FGameplayTag
  * durability (both 0 when the light needs no fuel).
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnCarriedLightChanged, FGameplayTag, SlotTag, bool, bLit, float, FuelSeconds, float, MaxFuel);
+/** A slot's visual finished loading and was attached (every machine; meshes load asynchronously after the equip). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEquipmentVisualAttached, FGameplayTag, SlotTag);
 
 /**
  * Manages equipment slots on a character. Handles equip/unequip flow,
@@ -155,6 +157,13 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Equipment|Events")
 	FOnEquippedItemBroken OnItemBroken;
+
+	/**
+	 * A slot's visual was attached to the owner's mesh (after the async mesh load). Owners that re-attach visuals
+	 * per view mode (first-person arms) re-apply their socket choice here.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "Equipment|Events")
+	FOnEquipmentVisualAttached OnVisualAttached;
 
 	UPROPERTY(BlueprintAssignable, Category = "Equipment|Events")
 	FOnCarriedLightChanged OnCarriedLightChanged;

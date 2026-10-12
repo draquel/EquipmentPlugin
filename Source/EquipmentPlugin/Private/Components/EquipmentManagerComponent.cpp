@@ -11,6 +11,7 @@
 #include "Types/ItemInstanceFragments.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/Character.h"
 #include "Engine/AssetManager.h"
 #include "Net/UnrealNetwork.h"
 #include "Engine/CollisionProfile.h"
@@ -835,6 +836,7 @@ void UEquipmentManagerComponent::OnMeshLoaded(FGameplayTag SlotTag)
 	if (Slot->AttachedVisualComponent)
 	{
 		Slot->AttachedVisualComponent->SetRelativeTransform(GetVisualAttachOffset(SlotTag));
+		OnVisualAttached.Broadcast(SlotTag);
 	}
 
 	// Animation layer support
@@ -923,6 +925,15 @@ USkeletalMeshComponent* UEquipmentManagerComponent::GetOwnerMesh() const
 	if (!GetOwner())
 	{
 		return nullptr;
+	}
+	// A character's body mesh, not just the first skeletal mesh found: owners with extra skeletal meshes
+	// (first-person arms, empty in third person) otherwise got the visual and it never showed (QA F2-04).
+	if (const ACharacter* Character = Cast<ACharacter>(GetOwner()))
+	{
+		if (Character->GetMesh())
+		{
+			return Character->GetMesh();
+		}
 	}
 	return GetOwner()->FindComponentByClass<USkeletalMeshComponent>();
 }
