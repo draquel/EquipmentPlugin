@@ -11,6 +11,8 @@
 #include "Types/CGFItemTypes.h"
 #include "Types/CGFEquipmentTypes.h"
 
+DEFINE_LOG_CATEGORY(LogEQP);
+
 #define LOCTEXT_NAMESPACE "FEquipmentPluginModule"
 
 namespace
@@ -35,14 +37,14 @@ void FEquipmentPluginModule::StartupModule()
 			{
 				if (Args.Num() < 2)
 				{
-					UE_LOG(LogTemp, Warning, TEXT("Equipment.Equip: Usage: Equipment.Equip <DefName> <SlotTag>"));
+					UE_LOG(LogEQP, Warning, TEXT("Equipment.Equip: Usage: Equipment.Equip <DefName> <SlotTag>"));
 					return;
 				}
 
 				UEquipmentManagerComponent* Equipment = FindPlayerEquipment(World);
 				if (!Equipment)
 				{
-					UE_LOG(LogTemp, Warning, TEXT("Equipment.Equip: No player equipment manager found."));
+					UE_LOG(LogEQP, Warning, TEXT("Equipment.Equip: No player equipment manager found."));
 					return;
 				}
 
@@ -51,7 +53,7 @@ void FEquipmentPluginModule::StartupModule()
 				UItemDatabaseSubsystem* DB = GI->GetSubsystem<UItemDatabaseSubsystem>();
 				if (!DB)
 				{
-					UE_LOG(LogTemp, Warning, TEXT("Equipment.Equip: ItemDatabaseSubsystem not available."));
+					UE_LOG(LogEQP, Warning, TEXT("Equipment.Equip: ItemDatabaseSubsystem not available."));
 					return;
 				}
 
@@ -62,19 +64,19 @@ void FEquipmentPluginModule::StartupModule()
 				FItemInstance Item = DB->CreateItemInstance(AssetId, 1);
 				if (!Item.IsValid())
 				{
-					UE_LOG(LogTemp, Warning, TEXT("Equipment.Equip: Failed to create item '%s'. Definition not found."), *DefName);
+					UE_LOG(LogEQP, Warning, TEXT("Equipment.Equip: Failed to create item '%s'. Definition not found."), *DefName);
 					return;
 				}
 
 				FGameplayTag SlotTag = FGameplayTag::RequestGameplayTag(FName(*SlotTagStr), false);
 				if (!SlotTag.IsValid())
 				{
-					UE_LOG(LogTemp, Warning, TEXT("Equipment.Equip: Invalid slot tag '%s'."), *SlotTagStr);
+					UE_LOG(LogEQP, Warning, TEXT("Equipment.Equip: Invalid slot tag '%s'."), *SlotTagStr);
 					return;
 				}
 
 				EEquipmentResult Result = Equipment->TryEquipToSlot(Item, SlotTag);
-				UE_LOG(LogTemp, Log, TEXT("Equipment.Equip: '%s' -> slot '%s' = %s"),
+				UE_LOG(LogEQP, Log, TEXT("Equipment.Equip: '%s' -> slot '%s' = %s"),
 					*DefName, *SlotTagStr,
 					Result == EEquipmentResult::Success ? TEXT("Success") : TEXT("Failed"));
 			})
@@ -90,7 +92,7 @@ void FEquipmentPluginModule::StartupModule()
 				UEquipmentManagerComponent* Equipment = FindPlayerEquipment(World);
 				if (!Equipment)
 				{
-					UE_LOG(LogTemp, Warning, TEXT("Equipment.UnequipAll: No player equipment manager found."));
+					UE_LOG(LogEQP, Warning, TEXT("Equipment.UnequipAll: No player equipment manager found."));
 					return;
 				}
 
@@ -106,7 +108,7 @@ void FEquipmentPluginModule::StartupModule()
 					}
 				}
 
-				UE_LOG(LogTemp, Log, TEXT("Equipment.UnequipAll: Unequipped %d item(s)."), Unequipped);
+				UE_LOG(LogEQP, Log, TEXT("Equipment.UnequipAll: Unequipped %d item(s)."), Unequipped);
 			})
 	));
 }
