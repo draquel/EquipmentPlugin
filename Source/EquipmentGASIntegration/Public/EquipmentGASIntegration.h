@@ -1,9 +1,13 @@
 #pragma once
 
+#include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 
 class AActor;
 class UAbilitySystemComponent;
+
+/** The module's log category (EquipmentPlugin rule: one per module, with the module prefix). */
+DECLARE_LOG_CATEGORY_EXTERN(LogEQPGAS, Log, All);
 
 class FEquipmentGASIntegrationModule : public IModuleInterface
 {

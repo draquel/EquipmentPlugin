@@ -5,6 +5,8 @@
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
 
+DEFINE_LOG_CATEGORY(LogEQPGAS);
+
 #define LOCTEXT_NAMESPACE "FEquipmentGASIntegrationModule"
 
 UAbilitySystemComponent* FEquipmentGASIntegrationModule::ResolveAbilitySystemComponent(AActor* Owner)

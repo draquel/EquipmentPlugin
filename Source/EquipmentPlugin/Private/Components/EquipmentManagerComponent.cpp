@@ -1,4 +1,5 @@
 #include "Components/EquipmentManagerComponent.h"
+#include "EquipmentPlugin.h"
 #include "Components/InventoryComponent.h"
 #include "Subsystems/ItemDatabaseSubsystem.h"
 #include "Data/ItemDefinition.h"
@@ -358,7 +359,7 @@ EEquipmentResult UEquipmentManagerComponent::TryUnequipToInventory(FGameplayTag 
 	{
 		// Rollback: re-equip
 		Internal_Equip(UnequippedItem, SlotTag);
-		UE_LOG(LogTemp, Error, TEXT("EquipmentManager: Failed to add unequipped item to inventory after validation passed."));
+		UE_LOG(LogEQP, Error, TEXT("EquipmentManager: Failed to add unequipped item to inventory after validation passed."));
 		return EEquipmentResult::NoInventorySpace;
 	}
 

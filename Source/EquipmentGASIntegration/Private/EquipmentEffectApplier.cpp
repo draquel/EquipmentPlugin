@@ -1,4 +1,5 @@
 #include "EquipmentEffectApplier.h"
+#include "EquipmentGASIntegration.h"
 #include "AbilitySystemComponent.h"
 #include "GameplayEffect.h"
 #include "Types/CGFItemTypes.h"
@@ -74,7 +75,7 @@ void UEquipmentEffectApplier::ApplyEffects(const FItemInstance& Item, FGameplayT
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("EquipmentEffectApplier: %s has StatModifiers but no StatModifierEffectClass is configured (Project Settings > Plugins > Equipment GAS); stats not applied."), *Def->GetName());
+			UE_LOG(LogEQPGAS, Warning, TEXT("EquipmentEffectApplier: %s has StatModifiers but no StatModifierEffectClass is configured (Project Settings > Plugins > Equipment GAS); stats not applied."), *Def->GetName());
 		}
 	}
 
