@@ -13,7 +13,6 @@ public class EquipmentGASIntegration : ModuleRules
 			"Engine",
 			"GameplayTags",
 			"GameplayAbilities",
-			"GameplayTasks",
 			"CommonGameFramework",
 			"DeveloperSettings",
 		});
