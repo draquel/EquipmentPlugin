@@ -66,8 +66,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEquipQuery_IsSlotOccupied_Empty,
 
 bool FEquipQuery_IsSlotOccupied_Empty::RunTest(const FString& Parameters)
 {
-	auto* Comp = EquipmentTestHelpers::CreateTestEquipment({TEXT("Equipment.MainHand")});
-	FGameplayTag MainHand = EquipmentTestHelpers::RequestTestTag(TEXT("Equipment.MainHand"));
+	auto* Comp = EquipmentTestHelpers::CreateTestEquipment({TEXT("Equipment.Slot.MainHand")});
+	FGameplayTag MainHand = EquipmentTestHelpers::RequestTestTag(TEXT("Equipment.Slot.MainHand"));
 
 	TestFalse("Empty slot not occupied", Comp->IsSlotOccupied(MainHand));
 
@@ -81,8 +81,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEquipQuery_IsSlotOccupied_Filled,
 
 bool FEquipQuery_IsSlotOccupied_Filled::RunTest(const FString& Parameters)
 {
-	auto* Comp = EquipmentTestHelpers::CreateTestEquipment({TEXT("Equipment.MainHand")});
-	FGameplayTag MainHand = EquipmentTestHelpers::RequestTestTag(TEXT("Equipment.MainHand"));
+	auto* Comp = EquipmentTestHelpers::CreateTestEquipment({TEXT("Equipment.Slot.MainHand")});
+	FGameplayTag MainHand = EquipmentTestHelpers::RequestTestTag(TEXT("Equipment.Slot.MainHand"));
 
 	EquipmentTestHelpers::PlaceItemInSlot(Comp, EquipmentTestHelpers::CreateTestItem(TEXT("Sword")), 0);
 
@@ -98,7 +98,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEquipQuery_IsSlotOccupied_InvalidTag,
 
 bool FEquipQuery_IsSlotOccupied_InvalidTag::RunTest(const FString& Parameters)
 {
-	auto* Comp = EquipmentTestHelpers::CreateTestEquipment({TEXT("Equipment.MainHand")});
+	auto* Comp = EquipmentTestHelpers::CreateTestEquipment({TEXT("Equipment.Slot.MainHand")});
 	FGameplayTag Nonexistent = EquipmentTestHelpers::RequestTestTag(TEXT("Equipment.Nonexistent"));
 
 	TestFalse("Nonexistent tag returns false", Comp->IsSlotOccupied(Nonexistent));
@@ -117,8 +117,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEquipQuery_GetEquippedItem_Occupied,
 
 bool FEquipQuery_GetEquippedItem_Occupied::RunTest(const FString& Parameters)
 {
-	auto* Comp = EquipmentTestHelpers::CreateTestEquipment({TEXT("Equipment.MainHand")});
-	FGameplayTag MainHand = EquipmentTestHelpers::RequestTestTag(TEXT("Equipment.MainHand"));
+	auto* Comp = EquipmentTestHelpers::CreateTestEquipment({TEXT("Equipment.Slot.MainHand")});
+	FGameplayTag MainHand = EquipmentTestHelpers::RequestTestTag(TEXT("Equipment.Slot.MainHand"));
 
 	FItemInstance Sword = EquipmentTestHelpers::CreateTestItem(TEXT("Sword"));
 	EquipmentTestHelpers::PlaceItemInSlot(Comp, Sword, 0);
@@ -137,8 +137,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEquipQuery_GetEquippedItem_Empty,
 
 bool FEquipQuery_GetEquippedItem_Empty::RunTest(const FString& Parameters)
 {
-	auto* Comp = EquipmentTestHelpers::CreateTestEquipment({TEXT("Equipment.MainHand")});
-	FGameplayTag MainHand = EquipmentTestHelpers::RequestTestTag(TEXT("Equipment.MainHand"));
+	auto* Comp = EquipmentTestHelpers::CreateTestEquipment({TEXT("Equipment.Slot.MainHand")});
+	FGameplayTag MainHand = EquipmentTestHelpers::RequestTestTag(TEXT("Equipment.Slot.MainHand"));
 
 	FItemInstance Result = Comp->GetEquippedItem(MainHand);
 	TestFalse("Empty slot returns invalid item", Result.IsValid());
@@ -158,7 +158,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEquipQuery_GetOccupiedTags,
 bool FEquipQuery_GetOccupiedTags::RunTest(const FString& Parameters)
 {
 	auto* Comp = EquipmentTestHelpers::CreateTestEquipment({
-		TEXT("Equipment.MainHand"), TEXT("Equipment.OffHand"), TEXT("Equipment.Head")
+		TEXT("Equipment.Slot.MainHand"), TEXT("Equipment.Slot.OffHand"), TEXT("Equipment.Slot.Head")
 	});
 
 	// All empty initially
@@ -182,7 +182,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEquipQuery_GetEmptyTags,
 bool FEquipQuery_GetEmptyTags::RunTest(const FString& Parameters)
 {
 	auto* Comp = EquipmentTestHelpers::CreateTestEquipment({
-		TEXT("Equipment.MainHand"), TEXT("Equipment.OffHand"), TEXT("Equipment.Head")
+		TEXT("Equipment.Slot.MainHand"), TEXT("Equipment.Slot.OffHand"), TEXT("Equipment.Slot.Head")
 	});
 
 	// All empty
@@ -204,7 +204,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEquipQuery_AllFilled,
 bool FEquipQuery_AllFilled::RunTest(const FString& Parameters)
 {
 	auto* Comp = EquipmentTestHelpers::CreateTestEquipment({
-		TEXT("Equipment.MainHand"), TEXT("Equipment.OffHand")
+		TEXT("Equipment.Slot.MainHand"), TEXT("Equipment.Slot.OffHand")
 	});
 
 	EquipmentTestHelpers::PlaceItemInSlot(Comp, EquipmentTestHelpers::CreateTestItem(TEXT("A")), 0);
