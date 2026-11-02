@@ -52,7 +52,8 @@ UEquipmentManagerComponent (on the character)
 ```
 1. an empty slot with exactly that tag
 2. else an empty slot whose tag is a child of it (Equipment.Slot.Accessory → Accessory1, Accessory2)
-3. else the first slot with that tag or a child tag, occupied (the equip replaces its item)
+3. else the first slot with that tag or a child tag, occupied (an equip from an inventory swaps; a direct equip is
+   refused with SlotOccupied)
 4. else none → IncompatibleSlot
 ```
 
@@ -62,8 +63,10 @@ UEquipmentManagerComponent (on the character)
 
 `ValidateEquip(Item, SlotTag)` returns `EEquipmentResult`: `InvalidItem` (invalid instance or no Equipment fragment),
 `IncompatibleSlot` (no such slot, or `AcceptedItemTags` set and the item's tags match none of them), else `Success`.
-`CanEquipItem(Item)` is the same check on the slot `FindTargetSlot` picks (`BlueprintPure`). The `Try*` functions run
-it on the caller; the Server RPCs run it again (code review decision D-CR16).
+`CanEquipItem(Item)` is the same check on the slot `FindTargetSlot` picks (`BlueprintPure`). The inventory flows wrap it
+in `ValidateEquipFromInventory` (the item is in the inventory, the slot resolved) and `ValidateUnequipToInventory` (the
+slot holds an item the inventory can take): the `Try*` function runs the predicate on a client before it sends the
+request, and the server runs it again (code review decision D-CR16).
 
 ---
 
@@ -72,12 +75,11 @@ it on the caller; the Server RPCs run it again (code review decision D-CR16).
 ### Without an Inventory
 
 ```
-TryEquip(Item) → FindTargetSlot → TryEquipToSlot(Item, SlotTag):
+TryEquip(Item) → FindTargetSlot → TryEquipToSlot(Item, SlotTag):      authority only
+    client: NotAuthorized (no request carries an item: G91)
     ValidateEquip; failure → its result
-    client: ServerRPC_RequestEquip(Item, SlotTag), returns Success (optimistic)
-    server / standalone:
-        slot occupied → Internal_Unequip(SlotTag)    (the old item is dropped from the slot, not returned anywhere)
-        Internal_Equip(Item, SlotTag)
+    slot occupied → SlotOccupied (no inventory to take the old item: G90)
+    Internal_Equip(Item, SlotTag)
 
 TryUnequip(SlotTag, OutItem): the slot must be occupied; Internal_Unequip; the item comes back in OutItem
     (on a client: ServerRPC_RequestUnequip, and the item stays with the server)
@@ -93,20 +95,26 @@ TryUnequip(SlotTag, OutItem): the slot must be occupied; Internal_Unequip; the i
 
 ```
 TryEquipFromInventory(ItemInstanceId, SourceInventory, SlotTag):
-    find the item in the inventory (InvalidItem when absent); SlotTag empty → FindTargetSlot
-    ValidateEquip
-    client: ServerRPC_RequestEquipFromInventory, returns Success
-    server: slot occupied → the inventory must accept the old item (NoInventorySpace), Internal_Unequip it and
-            TryAddItem it back (re-equip it and return NoInventorySpace if that fails)
-            SourceInventory->TryRemoveItem(ItemInstanceId) → Internal_Equip
+    ValidateEquipFromInventory: the item in the inventory (InvalidItem when absent); SlotTag empty → FindTargetSlot;
+        ValidateEquip
+    client: ServerRPC_RequestEquipFromInventory(ItemInstanceId, SourceInventory, SlotTag), returns Success
+    server (EquipFromInventory, also the RPC's body after it checks the inventory is the requester's):
+        ValidateEquipFromInventory again
+        slot occupied → SourceInventory->TryReplaceItem(ItemInstanceId, old item): the old item takes the new one's
+            inventory slot in one validated step (refused → NoInventorySpace, nothing changed); Internal_Unequip
+        slot empty → SourceInventory->TryRemoveItem(ItemInstanceId); a failure returns Failed with nothing changed
+        Internal_Equip
 
 TryUnequipToInventory(SlotTag, TargetInventory):
-    the slot must be occupied, the inventory must accept the item (CanAcceptItem → NoInventorySpace)
+    ValidateUnequipToInventory: the slot occupied (Failed), CanAcceptItem (NoInventorySpace)
     client: ServerRPC_RequestUnequipToInventory
-    server: Internal_Unequip → TargetInventory->TryAddItem; on an unexpected failure re-equip and log an error
+    server (UnequipToInventory): the predicate again; Internal_Unequip → TargetInventory->TryAddItem; on an
+        unexpected failure re-equip and log an error
 ```
 
-Validation comes before any change, as for cross-inventory moves.
+Validation comes before any change, as for cross-inventory moves, and every inventory result is read: nothing is
+dropped (G90). A swap needs no free inventory slot, since the replaced item takes the slot the new one leaves; a full
+bag can still swap a sword for an axe.
 
 ---
 
@@ -230,19 +238,23 @@ visuals.
 CLIENT                                   SERVER
 ──────                                   ──────
 1. UI calls TryEquipFromInventory
-   (or TryEquip / TryEquipToSlot)
-2. ValidateEquip passes; no authority
-3. ServerRPC_RequestEquipFromInventory ► 4. Finds the item, ValidateEquip again; a refusal goes
-   (InstanceId, Inventory, SlotTag)         back as ClientRPC_EquipmentOperationFailed → OnOperationFailed
-                                         5. Old item back to the inventory, the new one removed
-                                            from it, Internal_Equip (visuals, GAS)
+2. ValidateEquipFromInventory passes;
+   no authority
+3. ServerRPC_RequestEquipFromInventory ► 4. The inventory must be the requester's (on its pawn, or
+   (InstanceId, Inventory, SlotTag)         another actor of its connection: NotAuthorized); the
+                                            predicate again; a refusal goes back as
+                                            ClientRPC_EquipmentOperationFailed → OnOperationFailed
+                                         5. The old item takes the new one's inventory slot (or the
+                                            new one just leaves it), Internal_Equip (visuals, GAS)
                                          6. EquipmentSlots and the inventory replicate
 7. OnRep_EquipmentSlots: visuals attach,
    OnEquipmentChanged → UI
 ```
 
-RPCs from one connection arrive in order, so two equips to the same slot run one after the other: the second finds the
-slot occupied and replaces (or, from an inventory, swaps back) the first.
+The request names an item by instance id; the server equips the item it holds under that id, so a client cannot equip
+an item it does not have (G91). `TryEquip` / `TryEquipToSlot` take a whole item and are server code only (a client gets
+`NotAuthorized`). RPCs from one connection arrive in order, so two equips to the same slot run one after the other: the
+second finds the slot occupied and swaps the first back into the inventory.
 
 ---
 
@@ -287,12 +299,16 @@ VoxelCharacterPlugin's `AVCPlayerController` binds the panel's delegates in `Bin
 
 ## Console Commands
 
-`Equipment.Equip <DefName> <SlotTag>` (creates the item and equips it to the player) and `Equipment.UnequipAll`,
+`Equipment.Equip <DefName> <SlotTag>` (creates the item and equips it to the player's empty slot; server or standalone)
+and `Equipment.UnequipAll`,
 registered in `EquipmentPlugin.cpp`; `Documentation/EDITOR_CONSOLE_GUIDE.md` lists them with every project command.
 
 ## Tests
 
 `Equipment.*`: `Queries.*` (`Private/Tests/Test_EquipmentQueries.cpp`), `Equip.Results` (the equip results),
+`Equip.FromInventorySwap` (a swap from a full bag keeps both items; a refused swap changes nothing),
+`Authority.ClientRequests` (a client's direct equip refused; its equip request delivered to the server as an instance
+id, simulated server/client with `CGFTesting::FRPCCall`; another player's inventory refused),
 `Durability.EmptySlotHasNone`, `LightSource.IntensityRule` / `NothingCarried`, and
 `GAS.ResolvesAbilitySystemThroughInterface` in the GAS module. VoxelCharacterPlugin's `VoxelCharacter.EquipmentLoop.*` tests cover
 the stat effect end to end.

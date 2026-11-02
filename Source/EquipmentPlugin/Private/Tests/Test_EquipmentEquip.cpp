@@ -80,13 +80,19 @@ bool FEquipmentEquipResultsTest::RunTest(const FString& Parameters)
 		static_cast<int32>(EEquipmentResult::IncompatibleSlot));
 	TestTrue(TEXT("The sword is still equipped"), Equipment->GetEquippedItem(MainHand).InstanceId == SwordItem.InstanceId);
 
-	// An occupied slot swaps: the axe replaces the sword and the result is Success (SlotOccupied is never returned).
+	// An occupied slot with no inventory to take its item is refused, not swapped: the sword would be lost (G90). A swap
+	// goes through an inventory (Equipment.Equip.FromInventorySwap).
 	const FItemInstance AxeItem = Database->CreateItemInstance(Axe, 1);
-	TestEqual(TEXT("Equipping into the occupied hand succeeds (a swap)"), static_cast<int32>(Equipment->TryEquip(AxeItem)), static_cast<int32>(EEquipmentResult::Success));
+	TestEqual(TEXT("Equipping directly into the occupied hand is SlotOccupied"), static_cast<int32>(Equipment->TryEquip(AxeItem)),
+		static_cast<int32>(EEquipmentResult::SlotOccupied));
+	TestTrue(TEXT("The main hand still holds the sword"), Equipment->GetEquippedItem(MainHand).InstanceId == SwordItem.InstanceId);
+	FItemInstance Out;
+	TestEqual(TEXT("Unequipping the sword succeeds"), static_cast<int32>(Equipment->TryUnequip(MainHand, Out)), static_cast<int32>(EEquipmentResult::Success));
+	TestTrue(TEXT("The unequipped item is the sword"), Out.InstanceId == SwordItem.InstanceId);
+	TestEqual(TEXT("The emptied hand takes the axe"), static_cast<int32>(Equipment->TryEquip(AxeItem)), static_cast<int32>(EEquipmentResult::Success));
 	TestTrue(TEXT("The main hand holds the axe"), Equipment->GetEquippedItem(MainHand).InstanceId == AxeItem.InstanceId);
 
 	// Unequip gives the item back; an empty slot fails.
-	FItemInstance Out;
 	TestEqual(TEXT("Unequipping the main hand succeeds"), static_cast<int32>(Equipment->TryUnequip(MainHand, Out)), static_cast<int32>(EEquipmentResult::Success));
 	TestTrue(TEXT("The unequipped item is the axe"), Out.InstanceId == AxeItem.InstanceId);
 	TestFalse(TEXT("The main hand is empty"), Equipment->IsSlotOccupied(MainHand));

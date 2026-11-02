@@ -31,7 +31,7 @@ void FEquipmentPluginModule::StartupModule()
 	// Equipment.Equip <DefName> <SlotTag>
 	ConsoleCommands.Add(MakeUnique<FAutoConsoleCommandWithWorldAndArgs>(
 		TEXT("Equipment.Equip"),
-		TEXT("Equip an item to a slot. Usage: Equipment.Equip <DefName> <SlotTag>"),
+		TEXT("Equip a new item to an empty slot (server / standalone; an occupied slot is refused). Usage: Equipment.Equip <DefName> <SlotTag>"),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda(
 			[](const TArray<FString>& Args, UWorld* World)
 			{
@@ -78,7 +78,7 @@ void FEquipmentPluginModule::StartupModule()
 				EEquipmentResult Result = Equipment->TryEquipToSlot(Item, SlotTag);
 				UE_LOG(LogEQP, Log, TEXT("Equipment.Equip: '%s' -> slot '%s' = %s"),
 					*DefName, *SlotTagStr,
-					Result == EEquipmentResult::Success ? TEXT("Success") : TEXT("Failed"));
+					*UEnum::GetValueAsString(Result));
 			})
 	));
 

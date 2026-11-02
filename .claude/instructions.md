@@ -59,15 +59,22 @@ EquipmentPlugin/
 5. **Validation (D-CR16).** `ValidateEquip` (returns `EEquipmentResult`) is the shared predicate: the `Try*` functions
    run it on the caller and the Server RPCs run it again, with the inventory checks (`CanAcceptItem`) repeated inline.
    Refusals answer with `ClientRPC_EquipmentOperationFailed` (`OnOperationFailed`).
-6. **Validate before moving items.** Equip-from-inventory checks that the old item fits back before touching either
-   side; unequip-to-inventory checks `CanAcceptItem` first and re-equips if the add still fails.
-7. **Visuals are cosmetic.** Every visual component is created with collision off (`NoCollision`, no overlaps, no
+6. **Validate before moving items, and read every result (G90).** Equip-from-inventory into an occupied slot goes
+   through `UInventoryComponent::TryReplaceItem` (the old item takes the new one's slot, validated whole; refused →
+   `NoInventorySpace`, nothing changed); into an empty slot it equips only after `TryRemoveItem` succeeds.
+   Unequip-to-inventory checks `CanAcceptItem` first and re-equips if the add still fails. A direct `TryEquipToSlot`
+   into an occupied slot is refused (`SlotOccupied`): with no inventory the old item would be lost.
+7. **Clients name items, never send them (G91).** `TryEquip` / `TryEquipToSlot` take a whole item and run on the
+   authority only (`NotAuthorized` on a client; there is no equip-an-item RPC). A client equips from an inventory by
+   instance id, and the server accepts only an inventory of the requester (`IsOwnersInventory`: on its owner, or on
+   another actor of the same connection).
+8. **Visuals are cosmetic.** Every visual component is created with collision off (`NoCollision`, no overlaps, no
    navigation): colliding visuals on the bones launched the death ragdoll through the terrain (QA F1-04). Attach to the
    character's body mesh (`GetMesh()`), not the first skeletal mesh found (QA F2-04), and apply
    `GetVisualAttachOffset` whenever a visual is re-attached.
-8. **Visuals and lights are rebuilt per machine** from the replicated `EquipmentSlots` in `OnRep_EquipmentSlots`; only
+9. **Visuals and lights are rebuilt per machine** from the replicated `EquipmentSlots` in `OnRep_EquipmentSlots`; only
    item data replicates.
-9. **Fuel and durability change on the authority** (`ApplyDurabilityLoss`, `TickFuel`); clients follow the replicated
+10. **Fuel and durability change on the authority** (`ApplyDurabilityLoss`, `TickFuel`); clients follow the replicated
    durability.
 
 ## Build.cs Dependencies
@@ -89,4 +96,5 @@ PrivateDependencyModuleNames: EquipmentPlugin, ItemInventoryPlugin
 - Console commands `Equipment.Equip <DefName> <SlotTag>` and `Equipment.UnequipAll`
   (`Documentation/EDITOR_CONSOLE_GUIDE.md`).
 - Tests under `Equipment.*` in each module's `Private/Tests/`, on the real `Equipment.Slot.*` tags; tests that need the
-  item database use `CGFTesting::FTestGameInstance` (CommonGameFramework).
+  item database use `CGFTesting::FTestGameInstance` (CommonGameFramework); `Equipment.Authority.ClientRequests` plays a
+  client and the server in one world with `SpawnRemoteOwner` and `CGFTesting::FRPCCall`.
