@@ -147,23 +147,23 @@ EEquipmentResult UEquipmentManagerComponent::TryEquip(const FItemInstance& Item)
 
 EEquipmentResult UEquipmentManagerComponent::TryEquipToSlot(const FItemInstance& Item, FGameplayTag SlotTag)
 {
+	// The item is whole: server code only. A client equips from an inventory by instance id (G91).
+	if (!HasMutationAuthority())
+	{
+		UE_LOG(LogEQP, Warning, TEXT("TryEquipToSlot on a client (%s): equip from an inventory instead."), *GetNameSafe(GetOwner()));
+		return EEquipmentResult::NotAuthorized;
+	}
+
 	EEquipmentResult ValidationResult = ValidateEquip(Item, SlotTag);
 	if (ValidationResult != EEquipmentResult::Success)
 	{
 		return ValidationResult;
 	}
 
-	if (GetOwner() && !GetOwner()->HasAuthority())
+	// No inventory to hand a replaced item to: refuse rather than drop it (G90).
+	if (IsSlotOccupied(SlotTag))
 	{
-		ServerRPC_RequestEquip(Item, SlotTag);
-		return EEquipmentResult::Success; // Optimistic
-	}
-
-	// If slot is occupied, auto-unequip first
-	FEquipmentSlot* Slot = FindSlot(SlotTag);
-	if (Slot && Slot->bIsOccupied)
-	{
-		Internal_Unequip(SlotTag);
+		return EEquipmentResult::SlotOccupied;
 	}
 
 	Internal_Equip(Item, SlotTag);
@@ -178,7 +178,7 @@ EEquipmentResult UEquipmentManagerComponent::TryUnequip(FGameplayTag SlotTag, FI
 		return EEquipmentResult::Failed;
 	}
 
-	if (GetOwner() && !GetOwner()->HasAuthority())
+	if (!HasMutationAuthority())
 	{
 		ServerRPC_RequestUnequip(SlotTag);
 		return EEquipmentResult::Success;
@@ -260,96 +260,85 @@ float UEquipmentManagerComponent::ApplyDurabilityLoss(FGameplayTag SlotTag, floa
 EEquipmentResult UEquipmentManagerComponent::TryEquipFromInventory(const FGuid& ItemInstanceId,
 	UInventoryComponent* SourceInventory, FGameplayTag SlotTag)
 {
-	if (!SourceInventory)
+	if (!HasMutationAuthority())
 	{
-		return EEquipmentResult::Failed;
-	}
-
-	// Find item in inventory
-	int32 SlotIndex = SourceInventory->FindSlotIndexByInstanceId(ItemInstanceId);
-	if (SlotIndex == INDEX_NONE)
-	{
-		return EEquipmentResult::InvalidItem;
-	}
-
-	FItemInstance Item = SourceInventory->GetItemInSlot(SlotIndex);
-
-	// Auto-detect slot if not specified
-	if (!SlotTag.IsValid())
-	{
-		SlotTag = FindTargetSlot(Item);
-		if (!SlotTag.IsValid())
+		// The client's check (the server runs it again): only the instance id travels.
+		FItemInstance Item;
+		const EEquipmentResult ValidationResult = ValidateEquipFromInventory(ItemInstanceId, SourceInventory, SlotTag, Item);
+		if (ValidationResult != EEquipmentResult::Success)
 		{
-			return EEquipmentResult::IncompatibleSlot;
+			return ValidationResult;
 		}
+		ServerRPC_RequestEquipFromInventory(ItemInstanceId, SourceInventory, SlotTag);
+		return EEquipmentResult::Success; // Optimistic
 	}
 
-	EEquipmentResult ValidationResult = ValidateEquip(Item, SlotTag);
+	return EquipFromInventory(ItemInstanceId, SourceInventory, SlotTag);
+}
+
+EEquipmentResult UEquipmentManagerComponent::TryUnequipToInventory(FGameplayTag SlotTag,
+	UInventoryComponent* TargetInventory)
+{
+	if (!HasMutationAuthority())
+	{
+		const EEquipmentResult ValidationResult = ValidateUnequipToInventory(SlotTag, TargetInventory);
+		if (ValidationResult != EEquipmentResult::Success)
+		{
+			return ValidationResult;
+		}
+		ServerRPC_RequestUnequipToInventory(SlotTag, TargetInventory);
+		return EEquipmentResult::Success; // Optimistic
+	}
+
+	return UnequipToInventory(SlotTag, TargetInventory);
+}
+
+EEquipmentResult UEquipmentManagerComponent::EquipFromInventory(const FGuid& ItemInstanceId,
+	UInventoryComponent* SourceInventory, FGameplayTag SlotTag)
+{
+	FItemInstance Item;
+	const EEquipmentResult ValidationResult = ValidateEquipFromInventory(ItemInstanceId, SourceInventory, SlotTag, Item);
 	if (ValidationResult != EEquipmentResult::Success)
 	{
 		return ValidationResult;
 	}
 
-	if (GetOwner() && !GetOwner()->HasAuthority())
+	const FEquipmentSlot* Slot = FindSlot(SlotTag);
+	if (Slot && Slot->bIsOccupied)
 	{
-		ServerRPC_RequestEquipFromInventory(ItemInstanceId, SourceInventory, SlotTag);
-		return EEquipmentResult::Success;
-	}
-
-	// If slot is occupied, check that inventory can accept the old item
-	FEquipmentSlot* ExistingSlot = FindSlot(SlotTag);
-	if (ExistingSlot && ExistingSlot->bIsOccupied)
-	{
-		if (!SourceInventory->CanAcceptItem(ExistingSlot->EquippedItem))
+		// A swap: the replaced item takes the inventory slot the new one leaves, validated whole before either side
+		// changes, so a refusal leaves both as they were and nothing is dropped (G90).
+		const EInventoryOperationResult Exchange = SourceInventory->TryReplaceItem(ItemInstanceId, Slot->EquippedItem);
+		if (Exchange != EInventoryOperationResult::Success)
 		{
-			return EEquipmentResult::NoInventorySpace;
+			UE_LOG(LogEQP, Log, TEXT("EquipFromInventory: %s cannot take the inventory slot of %s (%s)."),
+				*Slot->EquippedItem.ItemDefinitionId.ToString(), *Item.ItemDefinitionId.ToString(), *UEnum::GetValueAsString(Exchange));
+			return Exchange == EInventoryOperationResult::ItemNotFound ? EEquipmentResult::InvalidItem : EEquipmentResult::NoInventorySpace;
 		}
-
-		// Unequip old item back to inventory
-		FItemInstance OldItem = Internal_Unequip(SlotTag);
-		EInventoryOperationResult AddResult = SourceInventory->TryAddItem(OldItem);
-		if (AddResult != EInventoryOperationResult::Success)
-		{
-			// Rollback: re-equip old item
-			Internal_Equip(OldItem, SlotTag);
-			return EEquipmentResult::NoInventorySpace;
-		}
+		// Its copy is in the inventory now; this only empties the slot (GAS, visuals, events).
+		Internal_Unequip(SlotTag);
 	}
-
-	// Remove item from inventory
-	EInventoryOperationResult RemoveResult = SourceInventory->TryRemoveItem(ItemInstanceId);
-	if (RemoveResult != EInventoryOperationResult::Success)
+	else
 	{
-		return EEquipmentResult::Failed;
+		const EInventoryOperationResult Removed = SourceInventory->TryRemoveItem(ItemInstanceId);
+		if (Removed != EInventoryOperationResult::Success)
+		{
+			UE_LOG(LogEQP, Error, TEXT("EquipFromInventory: removing %s failed after validation passed (%s)."),
+				*Item.ItemDefinitionId.ToString(), *UEnum::GetValueAsString(Removed));
+			return Removed == EInventoryOperationResult::ItemNotFound ? EEquipmentResult::InvalidItem : EEquipmentResult::Failed;
+		}
 	}
 
 	Internal_Equip(Item, SlotTag);
 	return EEquipmentResult::Success;
 }
 
-EEquipmentResult UEquipmentManagerComponent::TryUnequipToInventory(FGameplayTag SlotTag,
-	UInventoryComponent* TargetInventory)
+EEquipmentResult UEquipmentManagerComponent::UnequipToInventory(FGameplayTag SlotTag, UInventoryComponent* TargetInventory)
 {
-	if (!TargetInventory)
+	const EEquipmentResult ValidationResult = ValidateUnequipToInventory(SlotTag, TargetInventory);
+	if (ValidationResult != EEquipmentResult::Success)
 	{
-		return EEquipmentResult::Failed;
-	}
-
-	const FEquipmentSlot* Slot = FindSlot(SlotTag);
-	if (!Slot || !Slot->bIsOccupied)
-	{
-		return EEquipmentResult::Failed;
-	}
-
-	if (!TargetInventory->CanAcceptItem(Slot->EquippedItem))
-	{
-		return EEquipmentResult::NoInventorySpace;
-	}
-
-	if (GetOwner() && !GetOwner()->HasAuthority())
-	{
-		ServerRPC_RequestUnequipToInventory(SlotTag, TargetInventory);
-		return EEquipmentResult::Success;
+		return ValidationResult;
 	}
 
 	FItemInstance UnequippedItem = Internal_Unequip(SlotTag);
@@ -359,7 +348,8 @@ EEquipmentResult UEquipmentManagerComponent::TryUnequipToInventory(FGameplayTag 
 	{
 		// Rollback: re-equip
 		Internal_Equip(UnequippedItem, SlotTag);
-		UE_LOG(LogEQP, Error, TEXT("EquipmentManager: Failed to add unequipped item to inventory after validation passed."));
+		UE_LOG(LogEQP, Error, TEXT("EquipmentManager: Failed to add unequipped item to inventory after validation passed (%s)."),
+			*UEnum::GetValueAsString(AddResult));
 		return EEquipmentResult::NoInventorySpace;
 	}
 
@@ -438,25 +428,6 @@ void UEquipmentManagerComponent::OnPostUnequip_Implementation(const FItemInstanc
 // Server RPCs
 // ===========================================================================
 
-void UEquipmentManagerComponent::ServerRPC_RequestEquip_Implementation(const FItemInstance& Item,
-	FGameplayTag SlotTag)
-{
-	EEquipmentResult Result = ValidateEquip(Item, SlotTag);
-	if (Result != EEquipmentResult::Success)
-	{
-		ClientRPC_EquipmentOperationFailed(Result);
-		return;
-	}
-
-	FEquipmentSlot* Slot = FindSlot(SlotTag);
-	if (Slot && Slot->bIsOccupied)
-	{
-		Internal_Unequip(SlotTag);
-	}
-
-	Internal_Equip(Item, SlotTag);
-}
-
 void UEquipmentManagerComponent::ServerRPC_RequestUnequip_Implementation(FGameplayTag SlotTag)
 {
 	FEquipmentSlot* Slot = FindSlot(SlotTag);
@@ -472,74 +443,38 @@ void UEquipmentManagerComponent::ServerRPC_RequestUnequip_Implementation(FGamepl
 void UEquipmentManagerComponent::ServerRPC_RequestEquipFromInventory_Implementation(const FGuid& ItemInstanceId,
 	UInventoryComponent* SourceInventory, FGameplayTag SlotTag)
 {
-	if (!SourceInventory)
+	// The client names an item; the server equips what it holds under that id, and only from the player's own inventory.
+	if (!IsOwnersInventory(SourceInventory))
 	{
-		ClientRPC_EquipmentOperationFailed(EEquipmentResult::Failed);
+		UE_LOG(LogEQP, Warning, TEXT("ServerRPC_RequestEquipFromInventory: %s named an inventory it does not own (%s)."),
+			*GetNameSafe(GetOwner()), SourceInventory ? *GetNameSafe(SourceInventory->GetOwner()) : TEXT("none"));
+		ClientRPC_EquipmentOperationFailed(EEquipmentResult::NotAuthorized);
 		return;
 	}
 
-	int32 SlotIndex = SourceInventory->FindSlotIndexByInstanceId(ItemInstanceId);
-	if (SlotIndex == INDEX_NONE)
-	{
-		ClientRPC_EquipmentOperationFailed(EEquipmentResult::InvalidItem);
-		return;
-	}
-
-	FItemInstance Item = SourceInventory->GetItemInSlot(SlotIndex);
-
-	if (!SlotTag.IsValid())
-	{
-		SlotTag = FindTargetSlot(Item);
-	}
-
-	EEquipmentResult Result = ValidateEquip(Item, SlotTag);
+	const EEquipmentResult Result = EquipFromInventory(ItemInstanceId, SourceInventory, SlotTag);
 	if (Result != EEquipmentResult::Success)
 	{
 		ClientRPC_EquipmentOperationFailed(Result);
-		return;
 	}
-
-	FEquipmentSlot* ExistingSlot = FindSlot(SlotTag);
-	if (ExistingSlot && ExistingSlot->bIsOccupied)
-	{
-		if (!SourceInventory->CanAcceptItem(ExistingSlot->EquippedItem))
-		{
-			ClientRPC_EquipmentOperationFailed(EEquipmentResult::NoInventorySpace);
-			return;
-		}
-
-		FItemInstance OldItem = Internal_Unequip(SlotTag);
-		SourceInventory->TryAddItem(OldItem);
-	}
-
-	SourceInventory->TryRemoveItem(ItemInstanceId);
-	Internal_Equip(Item, SlotTag);
 }
 
 void UEquipmentManagerComponent::ServerRPC_RequestUnequipToInventory_Implementation(FGameplayTag SlotTag,
 	UInventoryComponent* TargetInventory)
 {
-	if (!TargetInventory)
+	if (!IsOwnersInventory(TargetInventory))
 	{
-		ClientRPC_EquipmentOperationFailed(EEquipmentResult::Failed);
+		UE_LOG(LogEQP, Warning, TEXT("ServerRPC_RequestUnequipToInventory: %s named an inventory it does not own (%s)."),
+			*GetNameSafe(GetOwner()), TargetInventory ? *GetNameSafe(TargetInventory->GetOwner()) : TEXT("none"));
+		ClientRPC_EquipmentOperationFailed(EEquipmentResult::NotAuthorized);
 		return;
 	}
 
-	FEquipmentSlot* Slot = FindSlot(SlotTag);
-	if (!Slot || !Slot->bIsOccupied)
+	const EEquipmentResult Result = UnequipToInventory(SlotTag, TargetInventory);
+	if (Result != EEquipmentResult::Success)
 	{
-		ClientRPC_EquipmentOperationFailed(EEquipmentResult::Failed);
-		return;
+		ClientRPC_EquipmentOperationFailed(Result);
 	}
-
-	if (!TargetInventory->CanAcceptItem(Slot->EquippedItem))
-	{
-		ClientRPC_EquipmentOperationFailed(EEquipmentResult::NoInventorySpace);
-		return;
-	}
-
-	FItemInstance UnequippedItem = Internal_Unequip(SlotTag);
-	TargetInventory->TryAddItem(UnequippedItem);
 }
 
 // ===========================================================================
@@ -583,7 +518,7 @@ FGameplayTag UEquipmentManagerComponent::FindTargetSlot(const FItemInstance& Ite
 		}
 	}
 
-	// All matching slots occupied — return first match (will trigger swap)
+	// All matching slots occupied — return first match (an equip from an inventory swaps; a direct equip is refused)
 	for (const FEquipmentSlot& Slot : EquipmentSlots)
 	{
 		if (Slot.SlotTag == PreferredTag || Slot.SlotTag.MatchesTag(PreferredTag))
@@ -629,6 +564,79 @@ EEquipmentResult UEquipmentManagerComponent::ValidateEquip(const FItemInstance& 
 	}
 
 	return EEquipmentResult::Success;
+}
+
+EEquipmentResult UEquipmentManagerComponent::ValidateEquipFromInventory(const FGuid& ItemInstanceId,
+	const UInventoryComponent* SourceInventory, FGameplayTag& InOutSlotTag, FItemInstance& OutItem) const
+{
+	if (!SourceInventory)
+	{
+		return EEquipmentResult::Failed;
+	}
+
+	const int32 SlotIndex = SourceInventory->FindSlotIndexByInstanceId(ItemInstanceId);
+	if (SlotIndex == INDEX_NONE)
+	{
+		return EEquipmentResult::InvalidItem;
+	}
+	OutItem = SourceInventory->GetItemInSlot(SlotIndex);
+
+	// Auto-detect the slot if not specified
+	if (!InOutSlotTag.IsValid())
+	{
+		InOutSlotTag = FindTargetSlot(OutItem);
+		if (!InOutSlotTag.IsValid())
+		{
+			return EEquipmentResult::IncompatibleSlot;
+		}
+	}
+
+	return ValidateEquip(OutItem, InOutSlotTag);
+}
+
+EEquipmentResult UEquipmentManagerComponent::ValidateUnequipToInventory(FGameplayTag SlotTag,
+	const UInventoryComponent* TargetInventory) const
+{
+	if (!TargetInventory)
+	{
+		return EEquipmentResult::Failed;
+	}
+
+	const FEquipmentSlot* Slot = FindSlot(SlotTag);
+	if (!Slot || !Slot->bIsOccupied)
+	{
+		return EEquipmentResult::Failed;
+	}
+
+	if (!TargetInventory->CanAcceptItem(Slot->EquippedItem))
+	{
+		return EEquipmentResult::NoInventorySpace;
+	}
+
+	return EEquipmentResult::Success;
+}
+
+bool UEquipmentManagerComponent::IsOwnersInventory(const UInventoryComponent* Inventory) const
+{
+	const AActor* Owner = GetOwner();
+	const AActor* InventoryOwner = Inventory ? Inventory->GetOwner() : nullptr;
+	if (!Owner || !InventoryOwner)
+	{
+		return false;
+	}
+	if (InventoryOwner == Owner)
+	{
+		return true;
+	}
+	// Another actor of the same player (its player state, say): the same connection.
+	const UNetConnection* Connection = Owner->GetNetConnection();
+	return Connection && InventoryOwner->GetNetConnection() == Connection;
+}
+
+bool UEquipmentManagerComponent::HasMutationAuthority() const
+{
+	const AActor* Owner = GetOwner();
+	return !Owner || Owner->HasAuthority();
 }
 
 // ===========================================================================
@@ -946,7 +954,7 @@ USkeletalMeshComponent* UEquipmentManagerComponent::GetOwnerMesh() const
 void UEquipmentManagerComponent::ApplyGAS(const FItemInstance& Item, FGameplayTag SlotTag)
 {
 	// Server-only — ASC replication handles clients
-	if (GetOwner() && !GetOwner()->HasAuthority())
+	if (!HasMutationAuthority())
 	{
 		return;
 	}
@@ -959,7 +967,7 @@ void UEquipmentManagerComponent::ApplyGAS(const FItemInstance& Item, FGameplayTa
 
 void UEquipmentManagerComponent::RemoveGAS(FGameplayTag SlotTag)
 {
-	if (GetOwner() && !GetOwner()->HasAuthority())
+	if (!HasMutationAuthority())
 	{
 		return;
 	}

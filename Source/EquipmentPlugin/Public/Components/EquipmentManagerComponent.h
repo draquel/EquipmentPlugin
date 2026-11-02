@@ -61,11 +61,23 @@ public:
 	// Direct Equip/Unequip (no inventory)
 	// -----------------------------------------------------------------------
 
-	/** Equip an item to its preferred slot (reads EquipmentSlotTag from fragment) */
+	/**
+	 * Equip an item to its preferred slot (reads EquipmentSlotTag from the fragment). Authority only, like
+	 * TryEquipToSlot.
+	 * @param Item The item, held by the server code calling
+	 * @return As TryEquipToSlot; IncompatibleSlot when the item names no slot this component has
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Equipment")
 	EEquipmentResult TryEquip(const FItemInstance& Item);
 
-	/** Equip an item to a specific slot */
+	/**
+	 * Equip an item that is in no inventory to a specific slot. Authority only: the item is whole, and a client never
+	 * hands the server an item (G91); clients equip from an inventory (TryEquipFromInventory). With no inventory to
+	 * return a replaced item to, an occupied slot is refused rather than its item dropped (G90).
+	 * @param Item    The item, held by the server code calling
+	 * @param SlotTag The slot
+	 * @return Success; NotAuthorized on a client; SlotOccupied; ValidateEquip's failure otherwise (nothing changes)
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Equipment")
 	EEquipmentResult TryEquipToSlot(const FItemInstance& Item, FGameplayTag SlotTag);
 
@@ -77,12 +89,27 @@ public:
 	// Inventory-Integrated Equip/Unequip
 	// -----------------------------------------------------------------------
 
-	/** Equip from inventory — removes item from inventory, equips it */
+	/**
+	 * Equip from an inventory: the item leaves the inventory and goes into the slot. When the slot is occupied, the item
+	 * there takes the inventory slot the new one leaves (one validated exchange, UInventoryComponent::TryReplaceItem),
+	 * or the equip is refused: nothing is lost (G90). A client sends the instance id; the server equips the item it holds
+	 * under that id, from an inventory of the same player (G91).
+	 * @param ItemInstanceId  The item in SourceInventory
+	 * @param SourceInventory The inventory holding it
+	 * @param SlotTag         The slot (invalid = the item's preferred slot)
+	 * @return Success (optimistic on a client); InvalidItem (not in the inventory), IncompatibleSlot, NoInventorySpace
+	 *         (the replaced item cannot take the slot), Failed
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Equipment")
 	EEquipmentResult TryEquipFromInventory(const FGuid& ItemInstanceId,
 		UInventoryComponent* SourceInventory, FGameplayTag SlotTag);
 
-	/** Unequip to inventory — unequips item, adds it to inventory */
+	/**
+	 * Unequip to an inventory: the item leaves the slot and is added to the inventory, or stays equipped.
+	 * @param SlotTag         The slot
+	 * @param TargetInventory The inventory (on a client's request, one of the same player's)
+	 * @return Success (optimistic on a client); Failed (empty slot); NoInventorySpace
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Equipment")
 	EEquipmentResult TryUnequipToInventory(FGameplayTag SlotTag, UInventoryComponent* TargetInventory);
 
@@ -256,9 +283,6 @@ private:
 	// -----------------------------------------------------------------------
 
 	UFUNCTION(Server, Reliable)
-	void ServerRPC_RequestEquip(const FItemInstance& Item, FGameplayTag SlotTag);
-
-	UFUNCTION(Server, Reliable)
 	void ServerRPC_RequestUnequip(FGameplayTag SlotTag);
 
 	UFUNCTION(Server, Reliable)
@@ -284,6 +308,28 @@ private:
 
 	/** Validate that an item can go into a specific slot */
 	EEquipmentResult ValidateEquip(const FItemInstance& Item, FGameplayTag SlotTag) const;
+
+	/**
+	 * Equip-from-inventory's predicate, run by the caller and again by the server: the item is in the inventory and fits
+	 * the slot (InOutSlotTag resolved from the item when invalid).
+	 */
+	EEquipmentResult ValidateEquipFromInventory(const FGuid& ItemInstanceId, const UInventoryComponent* SourceInventory,
+		FGameplayTag& InOutSlotTag, FItemInstance& OutItem) const;
+
+	/** Unequip-to-inventory's predicate: the slot holds an item and the inventory can take it. */
+	EEquipmentResult ValidateUnequipToInventory(FGameplayTag SlotTag, const UInventoryComponent* TargetInventory) const;
+
+	/** The authoritative equip from an inventory (TryEquipFromInventory on the authority, and its RPC). */
+	EEquipmentResult EquipFromInventory(const FGuid& ItemInstanceId, UInventoryComponent* SourceInventory, FGameplayTag SlotTag);
+
+	/** The authoritative unequip to an inventory (TryUnequipToInventory on the authority, and its RPC). */
+	EEquipmentResult UnequipToInventory(FGameplayTag SlotTag, UInventoryComponent* TargetInventory);
+
+	/** A client may name this inventory: it is on this component's owner, or on another actor of the same connection. */
+	bool IsOwnersInventory(const UInventoryComponent* Inventory) const;
+
+	/** True where equipment state may change: the owner has authority, or there is no owner (a bare component). */
+	bool HasMutationAuthority() const;
 
 	/** Core equip logic (after validation) */
 	void Internal_Equip(const FItemInstance& Item, FGameplayTag SlotTag);
