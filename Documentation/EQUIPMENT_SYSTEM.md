@@ -1,8 +1,24 @@
-# Equipment System — Detailed Design
+# Equipment System
+
+> State as of 2026-11-02 (code review CR5).
 
 ## Overview
 
-This document covers the internal design of the EquipmentPlugin: the equipment manager component, the equip/unequip flow, visual attachment, and the GAS integration module. For how this plugin integrates with ItemInventoryPlugin and InteractionPlugin, see `Plugins/CommonGameFramework/Documentation/ARCHITECTURE.md`.
+The design of EquipmentPlugin: the equipment manager component and its slots, the equip and unequip flows with and
+without an inventory, visual attachment, durability, carried light, the GAS module, replication and the equipment UI.
+How the plugin fits with ItemInventoryPlugin and InteractionPlugin is in
+`Plugins/CommonGameFramework/Documentation/ARCHITECTURE.md`.
+
+Two modules:
+- `EquipmentPlugin` (runtime, log category `LogEQP`): `UEquipmentManagerComponent`, `FEquipmentSlot`
+  (`Types/EquipmentSystemTypes.h`), the slot and panel widgets. No GAS dependency.
+- `EquipmentGASIntegration` (runtime, log category `LogEQPGAS`): `UEquipmentAbilityGranter`, `UEquipmentEffectApplier`,
+  `UEquipmentGASSettings`. It registers itself with the core module at startup; without it equipment works with no
+  abilities or effects.
+
+Both depend on ItemInventoryPlugin, privately and required: the manager reads `UItemFragment_Equipment`,
+`UItemFragment_Durability` and `UItemFragment_LightSource` through `UItemDatabaseSubsystem`, equips from and unequips to
+a `UInventoryComponent`, and the slot widget shows `UItemTooltipWidget` (D-CR22, FW-05).
 
 ---
 
@@ -10,409 +26,287 @@ This document covers the internal design of the EquipmentPlugin: the equipment m
 
 ### Slot Configuration vs Runtime State
 
-There are two structs that work together:
+**`FEquipmentSlotDefinition`** (CommonGameFramework, configuration): `SlotTag`, `AcceptedItemTags`, `SlotDisplayName`,
+`AttachSocket`, `AttachOffset`. Set in `UEquipmentManagerComponent::AvailableSlots` on the owner.
 
-**FEquipmentSlotDefinition** (configuration, design-time):
-Defined in CommonGameFramework. Set on the EquipmentManagerComponent in the editor. Describes what slots exist and what they accept.
-
-**FEquipmentSlot** (runtime state):
-Created from definitions during `BeginPlay`. Holds the currently equipped item and cleanup handles.
+**`FEquipmentSlot`** (runtime state, replicated): created from the definitions in `BeginPlay`. Holds `SlotTag`,
+`EquippedItem`, `bIsOccupied`, copies of `AttachSocket`, `AttachOffset` and `AcceptedItemTags`, and, not replicated, the
+attached visual component, its load handle, the attached light and the fuel accumulator. GAS handles are kept by the GAS
+module per slot, not in the slot.
 
 ```
-EquipmentManagerComponent (on APlayerCharacter)
+UEquipmentManagerComponent (on the character)
 ├── AvailableSlots (config):
-│   ├── { SlotTag=Equipment.Slot.Head,     AcceptedTags={Item.Category.Armor}, Socket=head_socket }
-│   ├── { SlotTag=Equipment.Slot.Chest,    AcceptedTags={Item.Category.Armor}, Socket=NAME_None }
-│   ├── { SlotTag=Equipment.Slot.MainHand, AcceptedTags={Item.Category.Weapon}, Socket=hand_r_socket }
-│   └── { SlotTag=Equipment.Slot.OffHand,  AcceptedTags={Item.Category.Weapon,Item.Category.Armor}, Socket=hand_l_socket }
-│
+│   ├── { SlotTag=Equipment.Slot.Head,     AcceptedItemTags={Item.Category.Armor},  AttachSocket=head_socket }
+│   ├── { SlotTag=Equipment.Slot.MainHand, AcceptedItemTags={Item.Category.Weapon}, AttachSocket=hand_r_socket }
+│   └── ...
 └── EquipmentSlots (runtime, replicated):
-    ├── { SlotTag=Head,     EquippedItem=ID_Helm_Iron,  bIsOccupied=true,  VisualComp=ptr, AbilityHandles=[...] }
-    ├── { SlotTag=Chest,    EquippedItem=Invalid,        bIsOccupied=false }
-    ├── { SlotTag=MainHand, EquippedItem=ID_Sword_Iron, bIsOccupied=true,  VisualComp=ptr, AbilityHandles=[...] }
-    └── { SlotTag=OffHand,  EquippedItem=Invalid,        bIsOccupied=false }
+    ├── { SlotTag=Head,     EquippedItem=<helmet>, bIsOccupied=true,  AttachedVisualComponent=... }
+    └── { SlotTag=MainHand, EquippedItem=<empty>,  bIsOccupied=false }
 ```
 
 ### Slot Matching
 
-When `TryEquip(Item)` is called without a specific slot:
+`TryEquip(Item)` picks the slot with `FindTargetSlot(Item)` from the item's `UItemFragment_Equipment::EquipmentSlotTag`:
 
 ```
-1. Read item's Equipment fragment → get EquipmentSlotTag
-2. Find matching EquipmentSlot by tag
-3. If tag is a parent tag (e.g., Equipment.Slot.Accessory), find first empty child slot
-   (Accessory1, Accessory2)
-4. If no empty matching slot: return SlotOccupied
-5. Validate item tags against slot's AcceptedItemTags
+1. an empty slot with exactly that tag
+2. else an empty slot whose tag is a child of it (Equipment.Slot.Accessory → Accessory1, Accessory2)
+3. else the first slot with that tag or a child tag, occupied (the equip replaces its item)
+4. else none → IncompatibleSlot
 ```
 
-`TryEquipToSlot(Item, SlotTag)` skips step 1-3 and goes directly to the specified slot.
+`TryEquipToSlot(Item, SlotTag)` skips the search.
+
+### Validation
+
+`ValidateEquip(Item, SlotTag)` returns `EEquipmentResult`: `InvalidItem` (invalid instance or no Equipment fragment),
+`IncompatibleSlot` (no such slot, or `AcceptedItemTags` set and the item's tags match none of them), else `Success`.
+`CanEquipItem(Item)` is the same check on the slot `FindTargetSlot` picks (`BlueprintPure`). The `Try*` functions run
+it on the caller; the Server RPCs run it again (code review decision D-CR16).
 
 ---
 
-## Equip Flow (Detailed)
+## Equip Flow
 
-### Without Inventory Integration
-
-The simplest path — equip an item directly without managing an inventory source:
+### Without an Inventory
 
 ```
-TryEquip(Item):
-    1. FindTargetSlot(Item) → SlotTag, or fail
-    2. ValidateEquip(Item, SlotTag):
-       a. Item.IsValid()
-       b. Item has Equipment fragment
-       c. Slot exists in AvailableSlots
-       d. Item tags pass slot's AcceptedItemTags filter
-    3. If slot is occupied:
-       a. Call Internal_Unequip(SlotTag)  → fires unequip, clears visuals/abilities
-    4. Internal_Equip(Item, SlotTag):
-       a. Set EquipmentSlot.EquippedItem = Item
-       b. Set EquipmentSlot.bIsOccupied = true
-       c. ApplyVisuals(Item, SlotTag)
-       d. ApplyGAS(Item, SlotTag)  — if GAS module available
-       e. Fire OnItemEquipped(Item, SlotTag)
-       f. Mark slot dirty for replication
+TryEquip(Item) → FindTargetSlot → TryEquipToSlot(Item, SlotTag):
+    ValidateEquip; failure → its result
+    client: ServerRPC_RequestEquip(Item, SlotTag), returns Success (optimistic)
+    server / standalone:
+        slot occupied → Internal_Unequip(SlotTag)    (the old item is dropped from the slot, not returned anywhere)
+        Internal_Equip(Item, SlotTag)
+
+TryUnequip(SlotTag, OutItem): the slot must be occupied; Internal_Unequip; the item comes back in OutItem
+    (on a client: ServerRPC_RequestUnequip, and the item stays with the server)
 ```
 
-### With Inventory Integration
+**`Internal_Equip`:** set the slot's item and occupied flag, `ApplyVisuals`, `ApplyGAS` (authority only), broadcast
+`OnItemEquipped` and `OnEquipmentChanged`, call `OnPostEquip`, and for a light-source item announce the carried light.
 
-When equipping from inventory and unequipping back to inventory:
+**`Internal_Unequip`:** `RemoveGAS` (authority only), `RemoveVisuals`, clear the slot, broadcast `OnItemUnequipped` and
+`OnEquipmentChanged`, call `OnPostUnequip`, announce a light going out; returns the item.
+
+### With an Inventory
 
 ```
-TryEquipFromInventory(ItemInstanceId, InventoryComponent, SlotTag):
-    1. Find item in inventory by InstanceId
-    2. ValidateEquip(Item, SlotTag)
-    3. If slot is occupied:
-       a. Check InventoryComponent has space for the currently equipped item
-       b. If no space → return NoInventorySpace
-       c. Internal_Unequip(SlotTag) → item goes to InventoryComponent
-    4. Remove item from InventoryComponent (TryRemoveItem)
-    5. Internal_Equip(Item, SlotTag)
+TryEquipFromInventory(ItemInstanceId, SourceInventory, SlotTag):
+    find the item in the inventory (InvalidItem when absent); SlotTag empty → FindTargetSlot
+    ValidateEquip
+    client: ServerRPC_RequestEquipFromInventory, returns Success
+    server: slot occupied → the inventory must accept the old item (NoInventorySpace), Internal_Unequip it and
+            TryAddItem it back (re-equip it and return NoInventorySpace if that fails)
+            SourceInventory->TryRemoveItem(ItemInstanceId) → Internal_Equip
 
-TryUnequipToInventory(SlotTag, InventoryComponent):
-    1. Validate slot is occupied
-    2. Validate InventoryComponent can accept the item (space, weight, tags)
-    3. Internal_Unequip(SlotTag) → extracts item
-    4. Add item to InventoryComponent (TryAddItem)
-    5. If add fails (shouldn't after validation) → re-equip, log error
+TryUnequipToInventory(SlotTag, TargetInventory):
+    the slot must be occupied, the inventory must accept the item (CanAcceptItem → NoInventorySpace)
+    client: ServerRPC_RequestUnequipToInventory
+    server: Internal_Unequip → TargetInventory->TryAddItem; on an unexpected failure re-equip and log an error
 ```
 
-The inventory operations are atomic — validation before execution, rollback on unexpected failure. Same pattern as cross-inventory moves.
-
----
-
-## UI Widgets
-
-### EquipmentSlotWidget
-
-Single equipment slot display. Shows the equipped item icon (or empty placeholder) with a slot name label underneath (e.g., "Main Hand"). Created programmatically via `WidgetTree` in `NativeOnInitialized()`.
-
-**Click handling:** Overrides `NativeOnMouseButtonDown` to fire delegates:
-- Left-click → `OnSlotClicked.Broadcast(SlotTag, BoundEquipmentManager)`
-- Right-click → `OnSlotRightClicked.Broadcast(SlotTag, BoundEquipmentManager)`
-
-**Held highlight:** `SetHeld(bool)` toggles the background color between gold `(0.8, 0.6, 0.2, 0.9)` when held and default `(0.08, 0.08, 0.12, 0.9)` when not. Used by the click-to-move state machine in `AVCPlayerController`.
-
-**Icon visibility:** The `IconImage` starts `Collapsed`. `RefreshSlot()` sets it to `SelfHitTestInvisible` when an item is equipped (so clicks pass through to the slot widget) and back to `Collapsed` when the slot is empty.
-
-**Delegate type:** `FOnEquipmentSlotClicked(FGameplayTag SlotTag, UEquipmentManagerComponent* EquipmentManager)` — declared in `EquipmentSlotWidget.h`.
-
-### EquipmentPanelWidget
-
-Vertical panel showing all equipment slots. Creates child `UEquipmentSlotWidget` instances from the equipment manager's `AvailableSlots` in `InitPanel()`.
-
-**Delegate relay:** Binds each child slot's `OnSlotClicked`/`OnSlotRightClicked` to internal handlers that re-broadcast on the panel's own `OnSlotClicked`/`OnSlotRightClicked` delegates. This follows the same relay pattern used by `UHotbarWidget` and `UInventoryPanelWidget` in ItemInventoryPlugin.
-
-**SetSlotHeld(FGameplayTag, bool):** Finds the child widget matching the tag and calls `SetHeld()` on it. Used by the controller to highlight the grabbed slot.
-
-### Click-to-Move Integration
-
-The equipment panel integrates with `AVCPlayerController`'s click-to-move state machine. The controller binds to the panel's delegates in `BindSlotClickDelegates()` (called after both inventory and equipment panels are created in `ShowInventoryPanels()`).
-
-Supported interactions:
-
-| Source → Target | Operation |
-|-----------------|-----------|
-| Inventory → Equipment slot | `EquipMgr->TryEquipFromInventory(itemGuid, inventory, slotTag)` |
-| Equipment slot → Inventory | `EquipMgr->TryUnequipToInventory(slotTag, inventory)` + swap to clicked slot |
-| Equipment → Equipment | Cancel (not supported) |
-
-The unequip flow places the item in the first available inventory slot via `TryUnequipToInventory`, then swaps it to the player's clicked slot using `TrySwapSlots`. This gives the player precise control over where unequipped items land.
-
-See `VoxelCharacterPlugin/.claude/instructions.md` "Click-to-Move State Machine" for the full state machine description.
+Validation comes before any change, as for cross-inventory moves.
 
 ---
 
 ## Visual Attachment
 
-### Basic Attachment Flow
-
 ```
 ApplyVisuals(Item, SlotTag):
-    1. Get UItemDefinition from ItemDatabaseSubsystem
-    2. Find UItemFragment_Equipment on definition
-    3. Determine mesh type:
-       a. If EquipSkeletalMesh is set → use skeletal mesh component
-       b. Else if EquipMesh is set → use static mesh component
-       c. Else → no visual (ability-only equipment)
-    4. Async load the mesh
-    5. On load complete:
-       a. Create mesh component (UStaticMeshComponent or USkeletalMeshComponent)
-       b. Get AttachSocket from FEquipmentSlotDefinition
-       c. AttachToComponent(OwnerMesh, AttachSocket)
-       d. SetRelativeTransform(GetVisualAttachOffset(SlotTag))
-       e. Store component reference in FEquipmentSlot.AttachedVisualComponent
+    1. Equipment fragment from the item definition
+    2. EquipSkeletalMesh set → skeletal mesh component; else EquipMesh → static mesh component;
+       neither → no visual (ability-only equipment)
+    3. Async load the mesh (FStreamableManager), handle kept on the slot
+    4. On load (OnMeshLoaded): create the component with collision off, attach it to the owner's body mesh
+       (a character's GetMesh(), not the first skeletal mesh found) at the slot's AttachSocket,
+       SetRelativeTransform(GetVisualAttachOffset(SlotTag)), link AnimLayerClass if set, broadcast OnVisualAttached
+
+RemoveVisuals(SlotTag): cancel the load, unlink AnimLayerClass, detach and destroy the component, drop the light
 ```
 
-**Attach offsets.** The visual sits at `ItemFit * SlotOffset` relative to the socket
-(`GetVisualAttachOffset`). `FEquipmentSlotDefinition::AttachOffset` is the slot's skeleton correction: mannequin head and
-spine bones point X up the chain with Y forward, while item meshes are authored Z-up with +X forward, so the character
-sets a rotation (and a lift for the helmet rim) per slot. `UItemFragment_Equipment::AttachOffset` is the per-item fit
-on top of it (the leather armour scales up a little). Owners that re-attach visuals themselves, such as a first-person
-socket swap, re-apply `GetVisualAttachOffset` after attaching. `SetSlotAttachOffset` changes a slot's correction at
-runtime and re-applies it, which is how the offsets were tuned in PIE.
+**Collision off.** Visuals are cosmetic and are created with the `NoCollision` profile, no overlaps and no navigation
+effect. Item meshes carry simple collision, and colliding visuals on the bones launched the owner's death ragdoll through
+the terrain (QA F1-04).
 
-```
-RemoveVisuals(SlotTag):
-    1. Get FEquipmentSlot for SlotTag
-    2. If AttachedVisualComponent exists:
-       a. DetachFromComponent
-       b. DestroyComponent
-       c. Clear reference
-```
+**Attach offsets.** `GetVisualAttachOffset(SlotTag)` is the item's fit composed with the slot's correction:
+`UItemFragment_Equipment::AttachOffset * FEquipmentSlot::AttachOffset`. The slot's offset (from
+`FEquipmentSlotDefinition::AttachOffset`) corrects for the skeleton: mannequin head and spine bones point X up the chain
+with Y forward, while item meshes are authored Z-up with +X forward, so the character sets a rotation (and a lift for the
+helmet rim) per slot. The item's offset is the per-item fit on top (the leather armour scales up a little). Owners that
+re-attach visuals themselves, such as a first-person socket swap, apply `GetVisualAttachOffset` again after attaching.
+`SetSlotAttachOffset` changes a slot's correction at runtime and re-applies it (how the offsets were tuned in PIE).
 
-### Animation Layer Support
-
-If `UItemFragment_Equipment` specifies an `AnimLayerClass`:
-
-```
-On equip:
-    OwnerMesh->LinkAnimClassLayers(AnimLayerClass)
-
-On unequip:
-    OwnerMesh->UnlinkAnimClassLayers(AnimLayerClass)
-```
-
-This allows weapons to override animation layers (e.g., sword idle vs bow idle) without the equipment system knowing about specific animations.
+**Animation layers.** An Equipment fragment's `AnimLayerClass` is linked on the owner mesh with `LinkAnimClassLayers`
+when the visual attaches and unlinked when it is removed, so a weapon can swap animation layers without the equipment
+system knowing the animations.
 
 ### Client-Side Visual Sync
 
-Visuals are applied on all clients via `OnRep_EquipmentSlots`:
+`EquipmentSlots` replicate with `OnRep_EquipmentSlots`. Each client compares the replicated slots with what it has
+attached: an occupied slot without a visual gets `ApplyVisuals`, an empty slot with one gets `RemoveVisuals`, an occupied
+light slot refreshes its light from the replicated durability. Then `OnEquipmentChanged` fires. Only item data
+replicates; every client loads meshes and builds components itself.
 
-```cpp
-void UEquipmentManagerComponent::OnRep_EquipmentSlots()
-{
-    // Compare old and new state, apply/remove visuals for changes
-    for (FEquipmentSlot& Slot : EquipmentSlots)
-    {
-        if (Slot.bIsOccupied && !Slot.AttachedVisualComponent)
-        {
-            // Newly equipped on server, apply visuals locally
-            ApplyVisuals(Slot.EquippedItem, Slot.SlotTag);
-        }
-        else if (!Slot.bIsOccupied && Slot.AttachedVisualComponent)
-        {
-            // Unequipped on server, remove visuals locally
-            RemoveVisuals(Slot.SlotTag);
-        }
-    }
+---
 
-    OnEquipmentChanged.Broadcast();
-}
-```
+## Durability
 
-Each client independently loads meshes and creates visual components based on the replicated equipment state. The server never sends mesh component references over the network — only the item data replicates.
+`GetDurability(SlotTag, OutCurrent, OutMax)` reads the equipped item's `UInstanceFragment_DurabilityState` against its
+definition's `UItemFragment_Durability`. `ApplyDurabilityLoss(SlotTag, Amount)` (authority) lowers it, broadcasts
+`OnDurabilityChanged(SlotTag, Current, Max)`, and at zero with `bDestroyAtZero` unequips the item without returning it
+anywhere and broadcasts `OnItemBroken(SlotTag, Item)`. Callers decide what wears an item (VoxelCharacterPlugin's melee
+ability applies the weapon's `DegradeRate` per hit).
+
+## Carried Light
+
+An equipped item whose definition has a `UItemFragment_LightSource` gets a `UPointLightComponent` hung off its held
+visual (`FEquipmentSlot::AttachedLightComponent`, on every machine, built in `OnMeshLoaded` / `RefreshSlotLight`). The
+fuel is the item's Durability fragment: an authority timer (`TickFuel`, every 1 s) accumulates burn time per lit slot
+and calls `ApplyDurabilityLoss` every `FuelStepSeconds`, so the replicated durability changes a few times a minute. At
+zero the light goes dark (`LitIntensityFor`), and with `bDestroyAtZero` the item burns out through `OnItemBroken`. A
+light item without a Durability fragment burns forever.
+
+Queries: `GetCarriedLightLevel()` (lumens / 1000, 0 = dark), `GetCarriedLight(SlotTag, Fuel, MaxFuel)`, and the
+authority `ConsumeCarriedLightFuel(Seconds)` (lighting a sconce). `OnCarriedLightChanged(SlotTag, bLit, FuelSeconds,
+MaxFuel)` fires on every machine on equip, unequip and fuel change (the HUD binds here). The character implements
+`ICGFLightBearerInterface` (CommonGameFramework) on top of these.
 
 ---
 
 ## GAS Integration
 
-### Module Architecture
+### How the Modules Connect
 
-The GAS integration is a separate module (`EquipmentGASIntegration`) that the core `EquipmentSystem` module detects at runtime:
+The core module never names a GAS type. `UEquipmentManagerComponent` declares a static
+`GASSetupFactory` (`TFunction<void(UEquipmentManagerComponent*)>`); `FEquipmentGASIntegrationModule::StartupModule`
+sets it and `ShutdownModule` clears it. In `BeginPlay` every manager calls the factory when it is set, which:
 
-```
-EquipmentManagerComponent:
-    BeginPlay:
-        if FModuleManager::Get().IsModuleLoaded("EquipmentGASIntegration"):
-            AbilityGranter = NewObject<UEquipmentAbilityGranter>()
-            bGASAvailable = true
-```
+- creates a `UEquipmentAbilityGranter` and a `UEquipmentEffectApplier` owned by the manager (held in
+  `GASAbilityGranter` / `GASEffectApplier` as `UObject`s for GC);
+- binds `OnGASEquipCallback`: resolve the owner's ASC, `GrantAbilities`, `ApplyEffects`;
+- binds `OnGASUnequipCallback`: `RevokeAbilities`, `RemoveEffects`.
 
-When `bGASAvailable` is false, `ApplyGAS()` and `RemoveGAS()` are no-ops. The core equipment flow (slot management, visuals) works identically without GAS.
+`ApplyGAS` / `RemoveGAS` call those callbacks on the authority only; without the GAS module they are not bound and the
+equipment flow is otherwise identical. The ASC is found with
+`FEquipmentGASIntegrationModule::ResolveAbilitySystemComponent(Owner)` (`UAbilitySystemGlobals`, so an
+`IAbilitySystemInterface` owner whose ASC lives on the player state is found, with a component search as fallback).
 
-### Ability Granting
+### Abilities
 
-```
-ApplyGAS(Item, SlotTag):
-    1. Get UItemFragment_Equipment from item definition
-    2. Get ASC from owning actor (FindComponentByClass<UAbilitySystemComponent>)
-    3. If no ASC → warn and return
+`UEquipmentAbilityGranter::GrantAbilities(Item, SlotTag, ASC)` gives each class in the fragment's `GrantedAbilities` and
+keeps the spec handles per slot (with the ASC they were granted on). `RevokeAbilities(SlotTag, ASC)` clears those
+handles; a null ASC falls back to the one recorded, which matters when the owner is a pawn already unpossessed on its way
+to destruction (the player state's ASC outlives it).
 
-    // Grant abilities
-    4. For each TSubclassOf<UGameplayAbility> in Fragment.GrantedAbilities:
-       a. FGameplayAbilitySpec Spec(AbilityClass, 1, INDEX_NONE, this)
-       b. Handle = ASC->GiveAbility(Spec)
-       c. Store Handle in EquipmentSlot.GrantedAbilityHandles
+### Effects
 
-    // Apply passive effects (permanent while equipped)
-    5. For each TSubclassOf<UGameplayEffect> in Fragment.PassiveEffects:
-       a. FGameplayEffectContextHandle Context = ASC->MakeEffectContext()
-       b. Context.AddSourceObject(this)
-       c. FGameplayEffectSpecHandle Spec = ASC->MakeOutgoingSpec(EffectClass, 1, Context)
-       d. Handle = ASC->ApplyGameplayEffectSpecToSelf(*Spec.Data)
-       e. Store Handle in EquipmentSlot.AppliedEffectHandles
+`UEquipmentEffectApplier::ApplyEffects(Item, SlotTag, ASC)`:
+- `PassiveEffects`: applied to self with the equipment manager as source object; handles kept per slot and removed on
+  unequip.
+- `StatModifiers` (`TArray<FCGFAttributeModifier>`, e.g. Defense +2, MaxHealth +10): applied through **one**
+  source-defined effect class, `UEquipmentGASSettings::StatModifierEffectClass` (Project Settings > Plugins > Equipment
+  GAS). That class declares an additive SetByCaller modifier per supported attribute keyed
+  `SetByCaller.Stat.<AttributeName>`; `UCGFGameplayEffectStatics::ApplyStatModifierEffect` zeroes every key and fills the
+  requested ones. The handle is tracked and removed like a passive effect. The game supplies the class because only it
+  knows its attribute sets (VoxelCharacterPlugin ships `UVCEquipmentStatEffect`); without one the stats are skipped with
+  a warning. A transient runtime effect is not used for lasting stats: active effects replicate to the owning client by
+  definition reference, which a runtime object cannot satisfy.
+- `OnEquipEffects`: applied once, not tracked, not removed on unequip.
 
-    // Apply one-time equip effects (e.g., "on equip, gain 10 shield")
-    6. For each TSubclassOf<UGameplayEffect> in Fragment.OnEquipEffects:
-       a. Apply same as above but do NOT store handle (one-time, not removed on unequip)
-```
+`RemoveEffects(SlotTag, ASC)` removes the tracked handles, with the same ASC fallback as abilities.
 
-### Ability Revocation
+**Handles, never classes.** Removal is by handle: two pieces granting the same class would both lose it if removal went
+by class.
 
-```
-RemoveGAS(SlotTag):
-    1. Get FEquipmentSlot
-    2. Get ASC from owning actor
-
-    // Revoke abilities
-    3. For each Handle in EquipmentSlot.GrantedAbilityHandles:
-       a. ASC->ClearAbility(Handle)
-    4. Clear GrantedAbilityHandles array
-
-    // Remove passive effects
-    5. For each Handle in EquipmentSlot.AppliedEffectHandles:
-       a. ASC->RemoveActiveGameplayEffect(Handle)
-    6. Clear AppliedEffectHandles array
-```
-
-**Critical:** Handles MUST be stored and used for removal. Never try to remove abilities/effects by class — if multiple equipment pieces grant the same ability class, removing by class would remove all of them. Handle-based removal is surgical.
-
-### GAS Execution Context
-
-GAS operations happen **only on the server** (or standalone). The ASC's built-in replication handles pushing ability and effect state to clients. The equipment system should never call `GiveAbility` or `ApplyGameplayEffectSpec` on a client — these are server-authoritative operations.
-
-```
-Server: TryEquip → Internal_Equip → ApplyGAS (grants abilities, applies effects)
-        ASC replicates ability/effect state to clients automatically
-
-Client: OnRep_EquipmentSlots → ApplyVisuals only (no GAS calls)
-```
-
-### Stat Modification via Effects
-
-Equipment stats (armor, damage bonus, speed) are applied as `UGameplayEffect` instances with infinite duration. Example:
-
-```
-GE_IronHelm_Passive (GameplayEffect asset):
-    Duration: Infinite
-    Modifiers:
-        - Attribute: Health.Armor, Operation: Add, Magnitude: 15
-        - Attribute: Health.MaxHealth, Operation: Add, Magnitude: 25
-```
-
-When the Iron Helm is equipped, this effect is applied to the ASC. When unequipped, it's removed via the stored handle. The attribute values update automatically through GAS's modifier system.
-
-### Data-driven stats (no effect asset)
-
-`UItemFragment_Equipment::StatModifiers` (`TArray<FCGFAttributeModifier>`, e.g. Defense +2, MaxHealth +10) is applied by
-`UEquipmentEffectApplier` through **one** source-defined effect class configured in Project Settings > Plugins >
-Equipment GAS (`UEquipmentGASSettings::StatModifierEffectClass`). That class declares an additive SetByCaller modifier
-per supported attribute keyed `SetByCaller.Stat.<AttributeName>`; `UCGFGameplayEffectStatics::ApplyStatModifierEffect`
-zeroes every key and fills the requested ones, so unrequested stats are no-ops. The handle is tracked and removed on
-unequip like a passive effect. The game supplies the class because only it knows its attribute sets (VoxelCharacterPlugin
-ships `UVCEquipmentStatEffect`). A transient runtime effect is deliberately not used for lasting stats: active effects
-replicate to the owning client by definition reference, which a runtime object cannot satisfy.
+**Server only.** Abilities and effects are granted on the authority; the ASC replicates them. Clients only attach
+visuals.
 
 ---
 
-## Multiplayer Flow
-
-### Equip Sequence (Multiplayer)
+## Multiplayer
 
 ```
 CLIENT                                   SERVER
 ──────                                   ──────
-1. Player drags sword to MainHand slot
-   (or presses equip button)
-
-2. UI calls EquipmentManager              
-   ->TryEquip(SwordInstance)              
-
-3. TryEquip checks HasAuthority()         
-   → false (client)                       
-
-4. Sends ServerRPC_RequestEquip ────────► 5. Server receives RPC
-   (SwordInstance, SlotTag)                  
-                                          6. Validates:
-                                             • Item is valid
-                                             • Slot exists and accepts this item
-                                             • If from inventory: item exists in inventory
-                                             • If slot occupied: space for old item
-                                          
-                                          7. Executes:
-                                             • Removes from inventory (if applicable)
-                                             • Sets equipment slot
-                                             • Grants abilities via GAS
-                                             • Applies effects via GAS
-                                          
-                                          8. Equipment slot marked dirty for replication
-                                          
-9. OnRep_EquipmentSlots fires ◄───────── Replication push
-   
-10. Client applies visuals                
-    (mesh load, socket attach)            
-    
-11. UI updates from OnEquipmentChanged    
-    delegate                              
+1. UI calls TryEquipFromInventory
+   (or TryEquip / TryEquipToSlot)
+2. ValidateEquip passes; no authority
+3. ServerRPC_RequestEquipFromInventory ► 4. Finds the item, ValidateEquip again; a refusal goes
+   (InstanceId, Inventory, SlotTag)         back as ClientRPC_EquipmentOperationFailed → OnOperationFailed
+                                         5. Old item back to the inventory, the new one removed
+                                            from it, Internal_Equip (visuals, GAS)
+                                         6. EquipmentSlots and the inventory replicate
+7. OnRep_EquipmentSlots: visuals attach,
+   OnEquipmentChanged → UI
 ```
 
-### Conflict Resolution
+RPCs from one connection arrive in order, so two equips to the same slot run one after the other: the second finds the
+slot occupied and replaces (or, from an inventory, swaps back) the first.
 
-If two RPCs arrive simultaneously (e.g., player tries to equip two items to the same slot):
-- Server processes RPCs sequentially (UE's RPC ordering guarantee per connection)
-- First equip succeeds
-- Second equip finds slot occupied, triggers swap-or-reject logic
-- Results replicate back in order
+---
+
+## UI Widgets
+
+Code-built like ItemInventoryPlugin's widgets: the tree is made in `NativeOnInitialized()` with `WidgetTree`, no UMG
+Designer assets.
+
+### UEquipmentSlotWidget
+
+`Public/UI/EquipmentSlotWidget.h`. One slot: the item icon (or empty) with the slot name underneath ("Main Hand"), and a
+`UItemTooltipWidget` for the equipped item. `InitSlot(EquipmentManager, SlotTag)`; `RefreshSlot()` follows the
+manager's changes and durability.
+
+- `NativeOnMouseButtonDown`: left click → `OnSlotClicked(SlotTag, EquipmentManager)`, right click →
+  `OnSlotRightClicked`; both `FOnEquipmentSlotClicked(FGameplayTag SlotTag, UEquipmentManagerComponent* EquipmentManager)`.
+- `SetHeld(bool)`: gold `(0.8, 0.6, 0.2, 0.9)` while held by click-to-move, default `(0.08, 0.08, 0.12, 0.9)`.
+- The icon starts `Collapsed`; `RefreshSlot()` makes it `SelfHitTestInvisible` while an item is equipped, so clicks reach
+  the slot.
+
+### UEquipmentPanelWidget
+
+`Public/UI/EquipmentPanelWidget.h`. A vertical panel of every slot in the manager's `AvailableSlots`, created in
+`InitPanel()`. It relays each child's click delegates on its own `OnSlotClicked` / `OnSlotRightClicked` (the same relay
+pattern as `UHotbarWidget` and `UInventoryPanelWidget`); `SetSlotHeld(SlotTag, bool)` highlights the grabbed slot;
+`RefreshAllSlots()`.
+
+### Click-to-Move Integration
+
+VoxelCharacterPlugin's `AVCPlayerController` binds the panel's delegates in `BindSlotClickDelegates()` (after
+`ShowInventoryPanels()` creates the inventory and equipment panels):
+
+| Source → Target | Operation |
+|-----------------|-----------|
+| Inventory slot → equipment slot | `TryEquipFromInventory(InstanceId, Inventory, SlotTag)` |
+| Equipment slot → inventory slot | `TryUnequipToInventory(SlotTag, Inventory)`, then `TrySwapSlots` to the clicked slot |
+| Equipment → equipment | cancelled (not supported) |
+
+`TryUnequipToInventory` puts the item in the first slot it fits; the swap then moves it where the player clicked.
+
+---
+
+## Console Commands
+
+`Equipment.Equip <DefName> <SlotTag>` (creates the item and equips it to the player) and `Equipment.UnequipAll`,
+registered in `EquipmentPlugin.cpp`; `Documentation/EDITOR_CONSOLE_GUIDE.md` lists them with every project command.
+
+## Tests
+
+`Equipment.*`: `Queries.*` (`Private/Tests/Test_EquipmentQueries.cpp`), `Equip.Results` (the equip results),
+`Durability.EmptySlotHasNone`, `LightSource.IntensityRule` / `NothingCarried`, and
+`GAS.ResolvesAbilitySystemThroughInterface` in the GAS module. VoxelCharacterPlugin's `VoxelCharacter.EquipmentLoop.*` tests cover
+the stat effect end to end.
 
 ---
 
 ## Extension Points
 
-### OnPostEquip / OnPostUnequip
+**`OnPostEquip` / `OnPostUnequip`** (`BlueprintNativeEvent`, empty in C++) run after the core equip and unequip. Games
+override them for modular meshes instead of socket attachment, material tints, sounds, camera changes, or a character
+preview.
 
-`BlueprintNativeEvent` functions called after the core equip/unequip logic completes. C++ default implementation is empty. Games override these for:
+**Custom slot rules.** `CanEquipItem` and `ValidateEquip` are not virtual. A rule such as a level requirement goes in the
+game's code before it calls `TryEquip*`, or as tags: give the slot `AcceptedItemTags` and tag the items.
 
-- **Modular character systems:** Swap mesh sections instead of socket attachment
-- **Material parameter changes:** Tint character mesh based on equipped armor
-- **Sound effects:** Play equip/unequip audio
-- **Camera adjustments:** Zoom or offset camera for large weapons
-- **UI state changes:** Update character preview, stat display
-
-### Custom Slot Validation
-
-Override `CanEquipItem` (BlueprintNativeEvent) for game-specific rules:
-
-```
-// Example: Level requirement
-bool MyEquipmentManager::CanEquipItem_Implementation(const FItemInstance& Item) const
-{
-    UItemDefinition* Def = GetDefinition(Item);
-    int32 RequiredLevel = Def->FindFragment<UMyLevelFragment>()->RequiredLevel;
-    return PlayerLevel >= RequiredLevel;
-}
-```
-
-### Equipment Sets
-
-Not built into the plugin, but the extension pattern for "wearing 3 pieces of the same set grants a bonus":
-
-```
-Game-layer code binds to OnEquipmentChanged.
-On change: scan all equipped items for set tags.
-Count matching tags.
-If threshold met: apply set bonus effect via ASC.
-```
-
-The plugin provides the events and query functions; set logic is game-specific.
+**Equipment sets.** Not built in. Bind `OnEquipmentChanged`, scan the equipped items' tags, and apply a set bonus effect
+through the ASC when a threshold is met.

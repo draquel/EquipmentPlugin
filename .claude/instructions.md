@@ -1,335 +1,92 @@
 # EquipmentPlugin — Plugin Instructions
 
+> State as of 2026-11-02 (code review CR5).
+
 ## Purpose
 
-Manages equipping and unequipping items, applying stat modifiers, granting abilities via GAS, and attaching visual meshes. Works with items from ItemInventoryPlugin but should function at a basic level independently (equipping raw equipment definitions without inventory integration).
+Equipping and unequipping items into tag-identified slots, attaching their visuals, wearing their durability, carrying
+light, and granting abilities and effects through GAS. Depends on CommonGameFramework and on ItemInventoryPlugin. The
+ItemInventoryPlugin dependency is required, not optional: both modules link it privately, the `.uplugin` lists it, and
+the manager reads item fragments and moves items to and from `UInventoryComponent` (D-CR22, FW-05). The plugin never
+references InteractionPlugin.
 
-Depends on CommonGameFramework. Optional dependency on ItemInventoryPlugin.
+## Reading Order
+
+1. `Documentation/EQUIPMENT_SYSTEM.md` — slots and matching, validation, the equip flows with and without an inventory,
+   visuals and attach offsets, durability, carried light, the GAS module, replication, the UI widgets.
+2. `Plugins/CommonGameFramework/Documentation/ARCHITECTURE.md` — how the framework plugins fit together.
+3. `Plugins/ItemInventoryPlugin/Documentation/ITEM_INVENTORY_SYSTEM.md` — `UItemFragment_Equipment`, durability and
+   light-source fragments, the inventory operations equipment calls.
 
 ## Module Structure
 
 ```
 EquipmentPlugin/
 ├── Source/
-│   ├── EquipmentSystem/                   ← Runtime: core equipment logic
+│   ├── EquipmentPlugin/                       ← runtime core, no GAS dependency (log LogEQP)
 │   │   ├── Public/
-│   │   │   ├── Components/
-│   │   │   │   └── EquipmentManagerComponent.h    ← Manages equipped items per actor
-│   │   │   ├── Data/
-│   │   │   │   └── EquipmentDefinition.h          ← Data asset or fragment defining equip behavior
-│   │   │   ├── Types/
-│   │   │   │   └── EquipmentSystemTypes.h         ← FEquipmentSlot, FEquipmentChangePayload
-│   │   │   └── EquipmentSystem.h
-│   │   └── Private/
-│   │       └── (mirrors Public)
-│   └── EquipmentGASIntegration/           ← Optional module: GAS ability/effect granting
+│   │   │   ├── Components/EquipmentManagerComponent.h   ← slots, equip/unequip, visuals, durability, light, RPCs
+│   │   │   ├── Types/EquipmentSystemTypes.h             ← FEquipmentSlot (runtime, replicated)
+│   │   │   ├── UI/EquipmentSlotWidget.h, EquipmentPanelWidget.h   ← code-built slot and panel widgets
+│   │   │   └── EquipmentPlugin.h
+│   │   └── Private/ (mirrors Public; EquipmentPlugin.cpp holds the console commands; Tests/)
+│   └── EquipmentGASIntegration/               ← GAS module (log LogEQPGAS)
 │       ├── Public/
-│       │   ├── EquipmentAbilityGranter.h          ← Handles granting/revoking abilities
-│       │   └── EquipmentEffectApplier.h           ← Handles applying/removing gameplay effects
-│       └── Private/
-│           └── (mirrors Public)
-└── EquipmentPlugin.uplugin
+│       │   ├── EquipmentAbilityGranter.h      ← grants / revokes abilities per slot
+│       │   ├── EquipmentEffectApplier.h       ← passive, stat-modifier and on-equip effects per slot
+│       │   ├── EquipmentGASSettings.h         ← UEquipmentGASSettings::StatModifierEffectClass
+│       │   └── EquipmentGASIntegration.h      ← the module; ResolveAbilitySystemComponent
+│       └── Private/ (Tests/)
+└── EquipmentPlugin.uplugin                    ← requires CommonGameFramework, ItemInventoryPlugin, GameplayAbilities
 ```
 
-Two modules: `EquipmentSystem` (no GAS dependency) and `EquipmentGASIntegration` (depends on GAS). Projects not using GAS only load EquipmentSystem. The split ensures compilation doesn't fail if GAS modules aren't present.
+`FEquipmentSlotDefinition` (slot configuration) lives in CommonGameFramework.
 
-### UI Widgets (in EquipmentPlugin/Source/EquipmentPlugin/)
+## Rules
 
-```
-Public/UI/
-├── EquipmentSlotWidget.h     ← Single slot display + click delegates + held highlight
-└── EquipmentPanelWidget.h    ← Vertical panel of slots, relays click delegates
-Private/UI/
-├── EquipmentSlotWidget.cpp
-└── EquipmentPanelWidget.cpp
-```
-
-Widget classes use programmatic `WidgetTree` construction (no UMG Designer). `EquipmentSlotWidget` fires `FOnEquipmentSlotClicked` delegates on click; `EquipmentPanelWidget` relays them. The click-to-move integration is handled by `AVCPlayerController` in VoxelCharacterPlugin. See `Documentation/EQUIPMENT_SYSTEM.md` "UI Widgets" section for details.
-
-## Key Classes
-
-### UEquipmentManagerComponent
-
-```cpp
-UCLASS(BlueprintType, meta = (BlueprintSpawnableComponent))
-class EQUIPMENTSYSTEM_API UEquipmentManagerComponent : public UActorComponent
-{
-    GENERATED_BODY()
-public:
-    // --- Configuration ---
-    // Available equipment slots on this actor
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Equipment|Config")
-    TArray<FEquipmentSlotDefinition> AvailableSlots;
-
-    // --- Operations ---
-    UFUNCTION(BlueprintCallable, Category = "Equipment|Operations")
-    EEquipmentResult TryEquip(const FItemInstance& Item);
-
-    UFUNCTION(BlueprintCallable, Category = "Equipment|Operations")
-    EEquipmentResult TryEquipToSlot(const FItemInstance& Item, FGameplayTag SlotTag);
-
-    UFUNCTION(BlueprintCallable, Category = "Equipment|Operations")
-    EEquipmentResult TryUnequip(FGameplayTag SlotTag);
-
-    UFUNCTION(BlueprintCallable, Category = "Equipment|Operations")
-    EEquipmentResult TrySwapEquipment(FGameplayTag SlotA, FGameplayTag SlotB);
-
-    // --- Queries ---
-    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Equipment|Query")
-    FItemInstance GetEquippedItem(FGameplayTag SlotTag) const;
-
-    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Equipment|Query")
-    bool IsSlotOccupied(FGameplayTag SlotTag) const;
-
-    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Equipment|Query")
-    TArray<FGameplayTag> GetAllOccupiedSlots() const;
-
-    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Equipment|Query")
-    bool CanEquipItem(const FItemInstance& Item) const;
-
-    // --- Events ---
-    UPROPERTY(BlueprintAssignable, Category = "Equipment|Events")
-    FOnItemEquipped OnItemEquipped;
-
-    UPROPERTY(BlueprintAssignable, Category = "Equipment|Events")
-    FOnItemUnequipped OnItemUnequipped;
-
-    UPROPERTY(BlueprintAssignable, Category = "Equipment|Events")
-    FOnEquipmentChanged OnEquipmentChanged;  // Catch-all
-
-    // --- Extension Points ---
-    // Called after equip — override in BP or subclass to add custom behavior
-    UFUNCTION(BlueprintNativeEvent, Category = "Equipment")
-    void OnPostEquip(const FItemInstance& Item, FGameplayTag SlotTag);
-
-    UFUNCTION(BlueprintNativeEvent, Category = "Equipment")
-    void OnPostUnequip(const FItemInstance& Item, FGameplayTag SlotTag);
-
-protected:
-    // Replicated equipment state
-    UPROPERTY(ReplicatedUsing = OnRep_EquipmentSlots)
-    TArray<FEquipmentSlot> EquipmentSlots;
-
-    UFUNCTION()
-    void OnRep_EquipmentSlots();
-
-    // Server RPCs
-    UFUNCTION(Server, Reliable)
-    void ServerRPC_RequestEquip(const FItemInstance& Item, FGameplayTag SlotTag);
-
-    UFUNCTION(Server, Reliable)
-    void ServerRPC_RequestUnequip(FGameplayTag SlotTag);
-};
-```
-
-### FEquipmentSlotDefinition
-
-```cpp
-USTRUCT(BlueprintType)
-struct FEquipmentSlotDefinition
-{
-    GENERATED_BODY()
-
-    // Slot identity (Equipment.Slot.Head, etc.)
-    UPROPERTY(EditAnywhere, BlueprintReadOnly)
-    FGameplayTag SlotTag;
-
-    // What items can go in this slot (matches against item tags)
-    UPROPERTY(EditAnywhere, BlueprintReadOnly)
-    FGameplayTagContainer AcceptedItemTags;
-
-    // Display name for UI
-    UPROPERTY(EditAnywhere, BlueprintReadOnly)
-    FText SlotDisplayName;
-
-    // Attachment socket on the skeletal mesh (for visual attachment)
-    UPROPERTY(EditAnywhere, BlueprintReadOnly)
-    FName AttachSocket;
-};
-```
-
-### FEquipmentSlot (Runtime)
-
-```cpp
-USTRUCT(BlueprintType)
-struct FEquipmentSlot
-{
-    GENERATED_BODY()
-
-    UPROPERTY(BlueprintReadOnly)
-    FGameplayTag SlotTag;
-
-    UPROPERTY(BlueprintReadOnly)
-    FItemInstance EquippedItem;  // Invalid FItemInstance if empty
-
-    UPROPERTY()
-    bool bIsOccupied = false;
-
-    // Handles for cleanup
-    TArray<FActiveGameplayEffectHandle> AppliedEffectHandles;
-    TArray<FGameplayAbilitySpecHandle> GrantedAbilityHandles;
-    TObjectPtr<USceneComponent> AttachedVisualComponent;
-};
-```
-
-### Equip/Unequip Flow
-
-**Equip:**
-1. Validate: Is the slot available? Does the item have an Equipment fragment? Does the item's slot tag match the target slot? Does the item pass the slot's tag filter?
-2. If a source inventory is involved: validate that unequipping the current item (if slot is occupied) can go back to inventory, and that the new item can be removed from inventory
-3. Execute:
-   a. If slot is occupied, unequip current item first (put back in inventory or drop)
-   b. Set the item in the equipment slot
-   c. Read the Equipment fragment for visual mesh data → spawn and attach to socket. Visual components are
-      created with collision OFF (NoCollision, no overlaps): they are cosmetic, and colliding visuals on the bones
-      launched the owner's death ragdoll through the terrain (QA F1-04).
-   d. If GAS integration module is loaded: grant abilities, apply effects
-   e. Fire OnItemEquipped delegate
-
-**Unequip:**
-1. Validate: Is the slot occupied? If returning to inventory, is there space?
-2. Execute:
-   a. If GAS: revoke abilities (by handle), remove effects (by handle)
-   b. Destroy/detach visual mesh component
-   c. Return item to inventory (or drop as world item, or destroy — configurable)
-   d. Clear the equipment slot
-   e. Fire OnItemUnequipped delegate
-
-### GAS Integration (EquipmentGASIntegration Module)
-
-This is a separate module so the core EquipmentSystem doesn't require GAS. The integration module provides:
-
-**UEquipmentAbilityGranter** — A helper class that the EquipmentManagerComponent delegates to when GAS is available:
-```cpp
-UCLASS()
-class EQUIPMENTGASINTEGRATION_API UEquipmentAbilityGranter : public UObject
-{
-    GENERATED_BODY()
-public:
-    // Grant abilities from equipment fragment to the ASC
-    TArray<FGameplayAbilitySpecHandle> GrantAbilities(
-        UAbilitySystemComponent* ASC,
-        const TArray<TSubclassOf<UGameplayAbility>>& Abilities);
-
-    // Revoke previously granted abilities
-    void RevokeAbilities(
-        UAbilitySystemComponent* ASC,
-        const TArray<FGameplayAbilitySpecHandle>& Handles);
-
-    // Apply passive effects
-    TArray<FActiveGameplayEffectHandle> ApplyEffects(
-        UAbilitySystemComponent* ASC,
-        const TArray<TSubclassOf<UGameplayEffect>>& Effects,
-        float Level = 1.0f);
-
-    // Remove applied effects
-    void RemoveEffects(
-        UAbilitySystemComponent* ASC,
-        const TArray<FActiveGameplayEffectHandle>& Handles);
-};
-```
-
-**Stat modifiers**: `UItemFragment_Equipment::StatModifiers` go through `UEquipmentGASSettings::StatModifierEffectClass` (Project Settings > Plugins > Equipment GAS; a SetByCaller.Stat.* effect the game provides) via `UCGFGameplayEffectStatics::ApplyStatModifierEffect`; handle tracked and removed on unequip. The ASC is resolved with `FEquipmentGASIntegrationModule::ResolveAbilitySystemComponent` (IAbilitySystemInterface-aware).
-
-**How the modules connect**: EquipmentManagerComponent checks at runtime if the GAS integration module is loaded. If yes, it creates a UEquipmentAbilityGranter and delegates ability/effect management to it. If no, it skips those steps. The check uses `FModuleManager::Get().IsModuleLoaded("EquipmentGASIntegration")`.
-
-**What the Equipment fragment on items provides for GAS:**
-```cpp
-// This lives in ItemInventoryPlugin as a definition fragment
-UCLASS()
-class UItemFragment_Equipment : public UItemDefinitionFragment
-{
-    GENERATED_BODY()
-public:
-    UPROPERTY(EditAnywhere, Category = "Equipment")
-    FGameplayTag EquipmentSlotTag;
-
-    UPROPERTY(EditAnywhere, Category = "Equipment|Visuals")
-    TSoftObjectPtr<UStaticMesh> EquipMesh;
-
-    UPROPERTY(EditAnywhere, Category = "Equipment|Visuals")
-    TSoftObjectPtr<USkeletalMesh> EquipSkeletalMesh;
-
-    UPROPERTY(EditAnywhere, Category = "Equipment|Visuals")
-    TSubclassOf<UAnimInstance> AnimLayerClass;
-
-    UPROPERTY(EditAnywhere, Category = "Equipment|GAS")
-    TArray<TSubclassOf<UGameplayAbility>> GrantedAbilities;
-
-    UPROPERTY(EditAnywhere, Category = "Equipment|GAS")
-    TArray<TSubclassOf<UGameplayEffect>> PassiveEffects;
-
-    UPROPERTY(EditAnywhere, Category = "Equipment|GAS")
-    TArray<TSubclassOf<UGameplayEffect>> OnEquipEffects;  // Applied once on equip
-};
-```
-
-### Visual Attachment System
-
-The EquipmentManagerComponent handles basic visual attachment:
-
-1. Read mesh reference from equipment fragment (StaticMesh or SkeletalMesh)
-2. Async load the mesh
-3. Create a UStaticMeshComponent or USkeletalMeshComponent
-4. Attach to the specified socket on the owning actor's mesh
-5. Store the component reference in FEquipmentSlot for cleanup on unequip
-
-For more complex visual systems (modular character with mesh merging, material parameter changes, etc.), the `OnPostEquip` BlueprintNativeEvent is the extension point. Games override it to implement their specific visual logic.
-
-### Carried Light (feature 7)
-
-An equipped item whose definition carries `UItemFragment_LightSource` gets a `UPointLightComponent` hung off its held visual (`FEquipmentSlot::AttachedLightComponent`, every machine, built in `OnMeshLoaded` / `RefreshSlotLight`). Fuel is the item's Durability fragment: an authority timer (`TickFuel`, 1 s) accumulates burn time per lit slot and calls `ApplyDurabilityLoss` every `FuelStepSeconds`, so the replicated durability changes a few times a minute. At zero the light goes dark (`LitIntensityFor`), and with `bDestroyAtZero` the item burns out through the normal `OnItemBroken` path. A light item without a Durability fragment burns forever. Queries: `GetCarriedLightLevel()` (lumens / 1000, 0 = dark), `GetCarriedLight(Slot, Fuel, Max)`, authority `ConsumeCarriedLightFuel(Seconds)` (lighting a sconce). `OnCarriedLightChanged(Slot, bLit, Fuel, Max)` fires on every machine on equip / unequip / fuel change (HUD binds here). The character implements `ICGFLightBearerInterface` (CommonGameFramework) on top of these.
-
-## Multiplayer
-
-Same pattern as InventoryComponent: server-authoritative with RPCs.
-
-Equipment state replicates via the EquipmentSlots array. Visual attachment happens on all clients via OnRep — when the replicated slot data changes, each client spawns/destroys the visual components locally.
-
-GAS ability/effect granting happens only on the server. The ASC replication handles pushing ability state to clients.
+1. **The core module never names a GAS type.** The GAS module sets `UEquipmentManagerComponent::GASSetupFactory` in
+   `StartupModule` (cleared in `ShutdownModule`); each manager calls it in `BeginPlay`, which creates the granter and
+   applier and binds `OnGASEquipCallback` / `OnGASUnequipCallback`. New GAS behaviour goes in the GAS module behind
+   those callbacks.
+2. **GAS runs on the authority only.** `ApplyGAS` / `RemoveGAS` return on clients; the ASC replicates abilities and
+   effects. Resolve the ASC with `FEquipmentGASIntegrationModule::ResolveAbilitySystemComponent` (it finds an ASC on the
+   player state through `IAbilitySystemInterface`).
+3. **Remove by handle, never by class.** The granter and applier keep handles per slot and the ASC they used; removal
+   falls back to that ASC when the owner can no longer resolve one (a pawn being destroyed after unpossession).
+4. **Lasting stats use the configured effect class.** `StatModifiers` go through
+   `UEquipmentGASSettings::StatModifierEffectClass` and `UCGFGameplayEffectStatics::ApplyStatModifierEffect`; never a
+   transient infinite effect (it does not replicate to the owning client).
+5. **Validation (D-CR16).** `ValidateEquip` (returns `EEquipmentResult`) is the shared predicate: the `Try*` functions
+   run it on the caller and the Server RPCs run it again, with the inventory checks (`CanAcceptItem`) repeated inline.
+   Refusals answer with `ClientRPC_EquipmentOperationFailed` (`OnOperationFailed`).
+6. **Validate before moving items.** Equip-from-inventory checks that the old item fits back before touching either
+   side; unequip-to-inventory checks `CanAcceptItem` first and re-equips if the add still fails.
+7. **Visuals are cosmetic.** Every visual component is created with collision off (`NoCollision`, no overlaps, no
+   navigation): colliding visuals on the bones launched the death ragdoll through the terrain (QA F1-04). Attach to the
+   character's body mesh (`GetMesh()`), not the first skeletal mesh found (QA F2-04), and apply
+   `GetVisualAttachOffset` whenever a visual is re-attached.
+8. **Visuals and lights are rebuilt per machine** from the replicated `EquipmentSlots` in `OnRep_EquipmentSlots`; only
+   item data replicates.
+9. **Fuel and durability change on the authority** (`ApplyDurabilityLoss`, `TickFuel`); clients follow the replicated
+   durability.
 
 ## Build.cs Dependencies
 
 ```csharp
-// EquipmentSystem (Runtime)
-PublicDependencyModuleNames.AddRange(new string[]
-{
-    "Core", "CoreUObject", "Engine", "NetCore",
-    "GameplayTags",
-    "CommonGameFramework",
-});
-
-// Optional: only if item integration is desired
-PrivateDependencyModuleNames.AddRange(new string[]
-{
-    "ItemSystem",  // For FItemInstance, equipment fragment
-});
+// EquipmentPlugin
+PublicDependencyModuleNames:  Core, CoreUObject, Engine, NetCore, GameplayTags, CommonGameFramework
+PrivateDependencyModuleNames: ItemInventoryPlugin, InputCore, UMG, Slate, SlateCore
 
 // EquipmentGASIntegration
-PublicDependencyModuleNames.AddRange(new string[]
-{
-    "Core", "CoreUObject", "Engine",
-    "GameplayAbilities", "GameplayTags", "GameplayTasks",
-    "CommonGameFramework",
-    "EquipmentSystem",
-});
+PublicDependencyModuleNames:  Core, CoreUObject, Engine, GameplayTags, GameplayAbilities, CommonGameFramework,
+                              DeveloperSettings
+PrivateDependencyModuleNames: EquipmentPlugin, ItemInventoryPlugin
 ```
 
-## Implementation Phase
+## Logging, Commands and Tests
 
-**Phase 8: Equipment Core**
-1. FEquipmentSlotDefinition and FEquipmentSlot types
-2. UEquipmentManagerComponent — slots, equip/unequip, validation
-3. Replication — replicated slots, RPCs, OnRep
-4. Visual attachment (basic static/skeletal mesh)
-5. OnPostEquip/OnPostUnequip extension points
-6. Integration with InventoryComponent (equip from inventory, unequip to inventory)
-7. Test without GAS first
-
-**Phase 9: GAS Integration**
-1. UEquipmentAbilityGranter
-2. UEquipmentEffectApplier (if separated from granter)
-3. Wire into EquipmentManagerComponent's equip/unequip flow
-4. Test: equip weapon → ability granted → unequip → ability revoked
-5. Test: equip armor → passive stat effect applied → unequip → effect removed
-6. Test with multiplayer: verify abilities replicate correctly via ASC
+- Log categories `LogEQP` (`EquipmentPlugin.h`) and `LogEQPGAS` (`EquipmentGASIntegration.h`).
+- Console commands `Equipment.Equip <DefName> <SlotTag>` and `Equipment.UnequipAll`
+  (`Documentation/EDITOR_CONSOLE_GUIDE.md`).
+- Tests under `Equipment.*` in each module's `Private/Tests/`, on the real `Equipment.Slot.*` tags; tests that need the
+  item database use `CGFTesting::FTestGameInstance` (CommonGameFramework).
