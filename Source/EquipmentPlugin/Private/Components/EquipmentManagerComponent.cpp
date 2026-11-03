@@ -68,17 +68,23 @@ void UEquipmentManagerComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Create runtime slots from definitions
-	EquipmentSlots.Reset();
-	for (const FEquipmentSlotDefinition& Def : AvailableSlots)
+	// The runtime slots are the authority's, built from the definitions. A client keeps the array the server sent, which
+	// arrives with the actor before this BeginPlay and can hold equipped items (a player joining, an actor becoming
+	// relevant): rebuilding it emptied those slots on the client, and the server, seeing nothing changed, never resent
+	// them (G102).
+	if (HasMutationAuthority())
 	{
-		FEquipmentSlot Slot;
-		Slot.SlotTag = Def.SlotTag;
-		Slot.AttachSocket = Def.AttachSocket;
-		Slot.AttachOffset = Def.AttachOffset;
-		Slot.AcceptedItemTags = Def.AcceptedItemTags;
-		Slot.bIsOccupied = false;
-		EquipmentSlots.Add(Slot);
+		EquipmentSlots.Reset();
+		for (const FEquipmentSlotDefinition& Def : AvailableSlots)
+		{
+			FEquipmentSlot Slot;
+			Slot.SlotTag = Def.SlotTag;
+			Slot.AttachSocket = Def.AttachSocket;
+			Slot.AttachOffset = Def.AttachOffset;
+			Slot.AcceptedItemTags = Def.AcceptedItemTags;
+			Slot.bIsOccupied = false;
+			EquipmentSlots.Add(Slot);
+		}
 	}
 
 	// Initialize GAS integration if the module is loaded

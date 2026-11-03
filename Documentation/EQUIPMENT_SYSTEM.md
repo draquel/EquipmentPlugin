@@ -29,7 +29,10 @@ a `UInventoryComponent`, and the slot widget shows `UItemTooltipWidget` (D-CR22,
 **`FEquipmentSlotDefinition`** (CommonGameFramework, configuration): `SlotTag`, `AcceptedItemTags`, `SlotDisplayName`,
 `AttachSocket`, `AttachOffset`. Set in `UEquipmentManagerComponent::AvailableSlots` on the owner.
 
-**`FEquipmentSlot`** (runtime state, replicated): created from the definitions in `BeginPlay`. Holds `SlotTag`,
+**`FEquipmentSlot`** (runtime state, replicated): created from the definitions in `BeginPlay` on the authority; a client
+keeps the array the server sent, which arrives before its `BeginPlay` with whatever is equipped (G102: rebuilding it on
+the client emptied the slots of an actor that first replicated with items equipped, and the server never resent them).
+Holds `SlotTag`,
 `EquippedItem`, `bIsOccupied`, copies of `AttachSocket`, `AttachOffset` and `AcceptedItemTags`, and, not replicated, the
 attached visual component, its load handle, the attached light and the fuel accumulator. GAS handles are kept by the GAS
 module per slot, not in the slot.
@@ -311,7 +314,9 @@ registered in `EquipmentPlugin.cpp`; `Documentation/EDITOR_CONSOLE_GUIDE.md` lis
 id, simulated server/client with `CGFTesting::FRPCCall`; another player's inventory refused),
 `Durability.EmptySlotHasNone`, `LightSource.IntensityRule` / `NothingCarried`, and
 `GAS.ResolvesAbilitySystemThroughInterface` in the GAS module. VoxelCharacterPlugin's `VoxelCharacter.EquipmentLoop.*` tests cover
-the stat effect end to end.
+the stat effect end to end. The equip flow above over a real connection (a dedicated server and a client in PIE: the
+request, the server's checks, the replicated slot and `OnRep_EquipmentSlots`, a rack's sword at its first replication)
+is the game module's `VoxelEngine.Replication.Framework`, run by the in-editor gate.
 
 ---
 
