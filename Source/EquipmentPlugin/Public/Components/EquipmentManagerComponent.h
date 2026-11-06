@@ -227,6 +227,32 @@ public:
 	FTransform GetVisualAttachOffset(FGameplayTag SlotTag) const;
 
 	/**
+	 * The bone or socket a slot's visual attaches to: the equipped item's AttachBoneOverride, else the slot's own.
+	 * Owners that re-attach visuals themselves start from this.
+	 * @param SlotTag The slot
+	 * @return The bone or socket; None for an unknown slot
+	 */
+	UFUNCTION(BlueprintPure, Category = "Equipment|Visuals")
+	FName GetVisualAttachSocket(FGameplayTag SlotTag) const;
+
+	/**
+	 * The bone the equipped item asks for instead of its slot's (its Equipment fragment's AttachBoneOverride).
+	 * @param SlotTag The slot
+	 * @return The bone; None when the item uses the slot's, or the slot is empty or unknown
+	 */
+	UFUNCTION(BlueprintPure, Category = "Equipment|Visuals")
+	FName GetItemAttachBone(FGameplayTag SlotTag) const;
+
+	/**
+	 * The attach rule both use: an item's override when its fragment has one, else the slot's socket.
+	 * @param SlotSocket The slot's socket
+	 * @param Fragment   The equipped item's Equipment fragment (may be null)
+	 * @return The bone or socket to attach to
+	 */
+	UFUNCTION(BlueprintPure, Category = "Equipment|Visuals")
+	static FName ChooseAttachSocket(FName SlotSocket, const UItemFragment_Equipment* Fragment);
+
+	/**
 	 * Change a slot's skeleton correction at runtime and re-apply it to the equipped visual (tuning, or a body swap).
 	 * @param SlotTag The slot
 	 * @param Offset  New transform relative to the socket
