@@ -130,7 +130,8 @@ ApplyVisuals(Item, SlotTag):
        neither → no visual (ability-only equipment)
     3. Async load the mesh (FStreamableManager), handle kept on the slot
     4. On load (OnMeshLoaded): create the component with collision off, attach it to the owner's body mesh
-       (a character's GetMesh(), not the first skeletal mesh found) at the slot's AttachSocket,
+       (a character's GetMesh(), not the first skeletal mesh found) at GetVisualAttachSocket(SlotTag): the item's
+       AttachBoneOverride, else the slot's AttachSocket,
        SetRelativeTransform(GetVisualAttachOffset(SlotTag)), link AnimLayerClass if set, broadcast OnVisualAttached
 
 RemoveVisuals(SlotTag): cancel the load, unlink AnimLayerClass, detach and destroy the component, drop the light
@@ -147,6 +148,13 @@ with Y forward, while item meshes are authored Z-up with +X forward, so the char
 helmet rim) per slot. The item's offset is the per-item fit on top (the leather armour scales up a little). Owners that
 re-attach visuals themselves, such as a first-person socket swap, apply `GetVisualAttachOffset` again after attaching.
 `SetSlotAttachOffset` changes a slot's correction at runtime and re-applies it (how the offsets were tuned in PIE).
+
+**An item's own bone.** An Equipment fragment's `AttachBoneOverride` attaches the item to another bone than its slot's
+(a bow equipped in the main hand rides `hand_l`): `ChooseAttachSocket` is the rule, `GetVisualAttachSocket` the bone a
+slot's visual uses, `GetItemAttachBone` the item's choice (None when it takes the slot's), and a torch's flame follows the
+same bone when there is no visual. On its own bone the slot's correction (tuned for the slot's bone) is not applied:
+`GetVisualAttachOffset` is the item's `AttachOffset` alone. Owners that re-attach visuals keep the item's bone in every
+view (VoxelCharacterPlugin's `UpdateEquipmentAttachments`). Test: `Equipment.Visuals.AttachBoneOverride`.
 
 **Animation layers.** An Equipment fragment's `AnimLayerClass` is linked on the owner mesh with `LinkAnimClassLayers`
 when the visual attaches and unlinked when it is removed, so a weapon can swap animation layers without the equipment

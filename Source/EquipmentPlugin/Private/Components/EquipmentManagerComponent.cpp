@@ -817,7 +817,7 @@ void UEquipmentManagerComponent::OnMeshLoaded(FGameplayTag SlotTag)
 		Slot->AttachedVisualComponent = nullptr;
 	}
 
-	FName Socket = Slot->AttachSocket;
+	const FName Socket = ChooseAttachSocket(Slot->AttachSocket, EquipFrag);
 
 	if (!EquipFrag->EquipSkeletalMesh.IsNull())
 	{
@@ -876,8 +876,35 @@ FTransform UEquipmentManagerComponent::GetVisualAttachOffset(FGameplayTag SlotTa
 		return FTransform::Identity;
 	}
 	const UItemFragment_Equipment* EquipFrag = Slot->bIsOccupied ? GetEquipmentFragment(Slot->EquippedItem) : nullptr;
+	if (EquipFrag && !EquipFrag->AttachBoneOverride.IsNone())
+	{
+		// On a bone of its own choosing the slot's correction (tuned for the slot's bone) does not apply.
+		return EquipFrag->AttachOffset;
+	}
 	// Item fit first (expressed in the corrected frame), then the slot's skeleton correction.
 	return EquipFrag ? EquipFrag->AttachOffset * Slot->AttachOffset : Slot->AttachOffset;
+}
+
+FName UEquipmentManagerComponent::ChooseAttachSocket(FName SlotSocket, const UItemFragment_Equipment* Fragment)
+{
+	return Fragment && !Fragment->AttachBoneOverride.IsNone() ? Fragment->AttachBoneOverride : SlotSocket;
+}
+
+FName UEquipmentManagerComponent::GetItemAttachBone(FGameplayTag SlotTag) const
+{
+	const FEquipmentSlot* Slot = EquipmentSlots.FindByPredicate([&SlotTag](const FEquipmentSlot& S) { return S.SlotTag == SlotTag; });
+	const UItemFragment_Equipment* EquipFrag = Slot && Slot->bIsOccupied ? GetEquipmentFragment(Slot->EquippedItem) : nullptr;
+	return EquipFrag ? EquipFrag->AttachBoneOverride : NAME_None;
+}
+
+FName UEquipmentManagerComponent::GetVisualAttachSocket(FGameplayTag SlotTag) const
+{
+	const FEquipmentSlot* Slot = EquipmentSlots.FindByPredicate([&SlotTag](const FEquipmentSlot& S) { return S.SlotTag == SlotTag; });
+	if (!Slot)
+	{
+		return NAME_None;
+	}
+	return ChooseAttachSocket(Slot->AttachSocket, Slot->bIsOccupied ? GetEquipmentFragment(Slot->EquippedItem) : nullptr);
 }
 
 void UEquipmentManagerComponent::SetSlotAttachOffset(FGameplayTag SlotTag, const FTransform& Offset)
@@ -1038,7 +1065,7 @@ void UEquipmentManagerComponent::RefreshSlotLight(FEquipmentSlot& Slot)
 		Flame->SetIntensityUnits(ELightUnits::Lumens);
 		// Hang off the held visual when there is one, else the hand socket itself.
 		Flame->AttachToComponent(Parent, FAttachmentTransformRules::SnapToTargetNotIncludingScale,
-			Slot.AttachedVisualComponent ? NAME_None : Slot.AttachSocket);
+			Slot.AttachedVisualComponent ? NAME_None : GetVisualAttachSocket(Slot.SlotTag));
 		Flame->SetRelativeLocation(Light->LightOffset);
 		Flame->RegisterComponent();
 		Slot.AttachedLightComponent = Flame;
