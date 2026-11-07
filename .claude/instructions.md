@@ -75,7 +75,9 @@ EquipmentPlugin/
 9. **Visuals and lights are rebuilt per machine** from the replicated `EquipmentSlots` in `OnRep_EquipmentSlots`; only
    item data replicates.
 10. **Fuel and durability change on the authority** (`ApplyDurabilityLoss`, `TickFuel`); clients follow the replicated
-   durability.
+   durability. A change to an equipped item's fragment goes through `EditFragment` on the slot's own item
+   (`Slot.EquippedItem`), never through a copy or a pointer `FindFragment` returned: only the revision it bumps tells
+   replication the item changed (G136).
 
 ## Build.cs Dependencies
 

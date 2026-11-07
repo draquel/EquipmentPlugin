@@ -128,7 +128,8 @@ void UEquipmentManagerComponent::OnRep_EquipmentSlots()
 		}
 		else if (Slot.bIsOccupied && Slot.AttachedLightComponent)
 		{
-			// Same item, possibly less fuel: the light and the HUD follow the replicated durability.
+			// Same item, possibly less fuel: the light and the HUD follow the replicated durability (ApplyDurabilityLoss
+			// marks the item changed, so a loss is sent: G136).
 			RefreshSlotLight(Slot);
 			NotifyCarriedLight(Slot);
 		}
@@ -231,15 +232,17 @@ float UEquipmentManagerComponent::ApplyDurabilityLoss(FGameplayTag SlotTag, floa
 	{
 		return -1.f;
 	}
-	UInstanceFragment_DurabilityState* State = Slot->EquippedItem.FindFragment<UInstanceFragment_DurabilityState>();
 	UItemDatabaseSubsystem* DB = GetItemDatabase();
 	const UItemDefinition* Def = DB ? DB->GetDefinition(Slot->EquippedItem.ItemDefinitionId) : nullptr;
 	const UItemFragment_Durability* Durability = Def ? Def->FindFragment<UItemFragment_Durability>() : nullptr;
-	if (!State || !Durability)
+	if (!Durability || !Slot->EquippedItem.FindFragment<UInstanceFragment_DurabilityState>())
 	{
 		return -1.f;
 	}
 
+	// Through the slot's own item: the edit marks it changed, so the slot is sent and a client's durability follows. The
+	// state replication last sent shares the fragment object, so a change made only to the object was never seen (G136).
+	UInstanceFragment_DurabilityState* State = Slot->EquippedItem.EditFragment<UInstanceFragment_DurabilityState>();
 	State->CurrentDurability = FMath::Clamp(State->CurrentDurability - FMath::Max(Amount, 0.f), 0.f, Durability->MaxDurability);
 	const float Remaining = State->CurrentDurability;
 	OnDurabilityChanged.Broadcast(SlotTag, Remaining, Durability->MaxDurability);
