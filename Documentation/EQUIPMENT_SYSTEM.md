@@ -164,8 +164,8 @@ system knowing the animations.
 
 `EquipmentSlots` replicate with `OnRep_EquipmentSlots`. Each client compares the replicated slots with what it has
 attached: an occupied slot without a visual gets `ApplyVisuals`, an empty slot with one gets `RemoveVisuals`, an occupied
-light slot refreshes its light from the replicated durability. Then `OnEquipmentChanged` fires. Only item data
-replicates; every client loads meshes and builds components itself.
+light slot refreshes its light from the replicated durability (sent when it changes: "Durability" below, G136). Then
+`OnEquipmentChanged` fires. Only item data replicates; every client loads meshes and builds components itself.
 
 ---
 
@@ -176,6 +176,13 @@ definition's `UItemFragment_Durability`. `ApplyDurabilityLoss(SlotTag, Amount)` 
 `OnDurabilityChanged(SlotTag, Current, Max)`, and at zero with `bDestroyAtZero` unequips the item without returning it
 anywhere and broadcasts `OnItemBroken(SlotTag, Item)`. Callers decide what wears an item (VoxelCharacterPlugin's melee
 ability applies the weapon's `DegradeRate` per hit).
+
+The loss changes the slot's own item through `FItemInstance::EditFragment`, which bumps the item's fragment revision:
+`EquipmentSlots` is compared with its last sent state through `FItemInstance::Identical`, and that state shares the
+item's fragment objects, so before G136 a worn item (and a carried light's fuel) never reached a client, whose
+`GetDurability` kept the value the item was equipped with. Now the slot is sent, the client's copy gets the new value,
+and `OnRep_EquipmentSlots` refreshes a light and fires `OnEquipmentChanged`, which the slot widget follows.
+`OnDurabilityChanged` and `OnItemBroken` fire on the authority only.
 
 ## Carried Light
 
@@ -320,11 +327,13 @@ registered in `EquipmentPlugin.cpp`; `Documentation/EDITOR_CONSOLE_GUIDE.md` lis
 `Equip.FromInventorySwap` (a swap from a full bag keeps both items; a refused swap changes nothing),
 `Authority.ClientRequests` (a client's direct equip refused; its equip request delivered to the server as an instance
 id, simulated server/client with `CGFTesting::FRPCCall`; another player's inventory refused),
-`Durability.EmptySlotHasNone`, `LightSource.IntensityRule` / `NothingCarried`, and
+`Durability.EmptySlotHasNone`, `Durability.LossMarksTheItem` (the worn item is no longer `Identical` to its state
+before, G136), `LightSource.IntensityRule` / `NothingCarried`, and
 `GAS.ResolvesAbilitySystemThroughInterface` in the GAS module. VoxelCharacterPlugin's `VoxelCharacter.EquipmentLoop.*` tests cover
 the stat effect end to end. The equip flow above over a real connection (a dedicated server and a client in PIE: the
-request, the server's checks, the replicated slot and `OnRep_EquipmentSlots`, a rack's sword at its first replication)
-is the game module's `VoxelEngine.Replication.Framework`, run by the in-editor gate.
+request, the server's checks, the replicated slot and `OnRep_EquipmentSlots`, a rack's sword at its first replication,
+the equipped sword's durability worn on the server reaching the client's `GetDurability`) is the game module's
+`VoxelEngine.Replication.Framework`, run by the in-editor gate.
 
 ---
 
