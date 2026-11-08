@@ -132,9 +132,11 @@ ApplyVisuals(Item, SlotTag):
     4. On load (OnMeshLoaded): create the component with collision off, attach it to the owner's body mesh
        (a character's GetMesh(), not the first skeletal mesh found) at GetVisualAttachSocket(SlotTag): the item's
        AttachBoneOverride, else the slot's AttachSocket,
-       SetRelativeTransform(GetVisualAttachOffset(SlotTag)), link AnimLayerClass if set, broadcast OnVisualAttached
+       SetRelativeTransform(GetVisualAttachOffset(SlotTag)), remember the item's id (AttachedVisualItemId) and the
+       layer (AttachedAnimLayerClass) on the slot, link AnimLayerClass if set, broadcast OnVisualAttached
 
-RemoveVisuals(SlotTag): cancel the load, unlink AnimLayerClass, detach and destroy the component, drop the light
+RemoveVisuals(SlotTag): cancel the load, unlink the layer the visual's item linked (else the held item's), detach and
+destroy the component, drop the light
 ```
 
 **Collision off.** Visuals are cosmetic and are created with the `NoCollision` profile, no overlaps and no navigation
@@ -154,7 +156,9 @@ re-attach visuals themselves, such as a first-person socket swap, apply `GetVisu
 slot's visual uses, `GetItemAttachBone` the item's choice (None when it takes the slot's), and a torch's flame follows the
 same bone when there is no visual. On its own bone the slot's correction (tuned for the slot's bone) is not applied:
 `GetVisualAttachOffset` is the item's `AttachOffset` alone. Owners that re-attach visuals keep the item's bone in every
-view (VoxelCharacterPlugin's `UpdateEquipmentAttachments`). Test: `Equipment.Visuals.AttachBoneOverride`.
+view (VoxelCharacterPlugin's `UpdateEquipmentAttachments`, which also composes the owner's per-body correction for the
+bone after the fit: an item is fitted once to the Mannequin's hand, and a body shaped differently corrects every item on
+that bone in its appearance asset; the character refinement plan's D71). Test: `Equipment.Visuals.AttachBoneOverride`.
 
 **Animation layers.** An Equipment fragment's `AnimLayerClass` is linked on the owner mesh with `LinkAnimClassLayers`
 when the visual attaches and unlinked when it is removed, so a weapon can swap animation layers without the equipment
@@ -164,8 +168,13 @@ system knowing the animations.
 
 `EquipmentSlots` replicate with `OnRep_EquipmentSlots`. Each client compares the replicated slots with what it has
 attached: an occupied slot without a visual gets `ApplyVisuals`, an empty slot with one gets `RemoveVisuals`, an occupied
+slot whose visual was built for another item (`IsVisualStale`: the slot's `AttachedVisualItemId` is not its item's id)
+gets both, since a hotbar swap is an unequip and an equip in one server frame and reaches the client as one replication
+of an occupied slot holding another item (G153, 2026-11-08; before it the old mesh, its fit and its layer stayed under the
+new action set until the slot emptied), and an occupied
 light slot refreshes its light from the replicated durability (sent when it changes: "Durability" below, G136). Then
-`OnEquipmentChanged` fires. Only item data replicates; every client loads meshes and builds components itself.
+`OnEquipmentChanged` fires. Only item data replicates; every client loads meshes and builds components itself. Test:
+`Equipment.Visuals.StaleAfterSwap`.
 
 ---
 

@@ -8,6 +8,7 @@
 #include "EquipmentSystemTypes.generated.h"
 
 class UPointLightComponent;
+class UAnimInstance;
 
 /**
  * Runtime equipment slot — holds the currently equipped item and visual state.
@@ -49,6 +50,18 @@ struct EQUIPMENTPLUGIN_API FEquipmentSlot
 	/** Attached visual mesh component (static or skeletal) */
 	UPROPERTY(NotReplicated)
 	TObjectPtr<USceneComponent> AttachedVisualComponent;
+
+	/**
+	 * The item instance the attached visual was built for. A client sees a hotbar swap as one replication of an occupied
+	 * slot holding another item (the server unequipped and equipped in one frame): the visual is rebuilt when this differs
+	 * from EquippedItem's id (G153).
+	 */
+	UPROPERTY(NotReplicated)
+	FGuid AttachedVisualItemId;
+
+	/** The anim layer linked for the attached visual's item, unlinked when the visual goes (the fragment of a swapped-in item names another). */
+	UPROPERTY(NotReplicated)
+	TSubclassOf<UAnimInstance> AttachedAnimLayerClass;
 
 	/** Async mesh load handle */
 	TSharedPtr<FStreamableHandle> MeshLoadHandle;

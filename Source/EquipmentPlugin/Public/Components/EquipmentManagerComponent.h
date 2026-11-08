@@ -253,6 +253,14 @@ public:
 	static FName ChooseAttachSocket(FName SlotSocket, const UItemFragment_Equipment* Fragment);
 
 	/**
+	 * Whether a slot's attached visual was built for another item than the one it holds: a client's view of a hotbar swap
+	 * (occupied to occupied in one replication, G153). Such a visual is rebuilt by OnRep_EquipmentSlots.
+	 * @param Slot The slot as replicated
+	 * @return True when the slot is occupied, has a visual, and the visual's item id is not the slot's item's
+	 */
+	static bool IsVisualStale(const FEquipmentSlot& Slot);
+
+	/**
 	 * Change a slot's skeleton correction at runtime and re-apply it to the equipped visual (tuning, or a body swap).
 	 * @param SlotTag The slot
 	 * @param Offset  New transform relative to the socket

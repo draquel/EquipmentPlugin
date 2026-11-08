@@ -126,6 +126,13 @@ void UEquipmentManagerComponent::OnRep_EquipmentSlots()
 		{
 			RemoveVisuals(Slot.SlotTag);
 		}
+		else if (IsVisualStale(Slot))
+		{
+			// A swap: the server unequipped one item and equipped another in one frame, so this client sees the slot occupied
+			// before and after with another item in it. The old visual and its layer go, the new item's come (G153).
+			RemoveVisuals(Slot.SlotTag);
+			ApplyVisuals(Slot.EquippedItem, Slot.SlotTag);
+		}
 		else if (Slot.bIsOccupied && Slot.AttachedLightComponent)
 		{
 			// Same item, possibly less fuel: the light and the HUD follow the replicated durability (ApplyDurabilityLoss
@@ -854,10 +861,12 @@ void UEquipmentManagerComponent::OnMeshLoaded(FGameplayTag SlotTag)
 	if (Slot->AttachedVisualComponent)
 	{
 		Slot->AttachedVisualComponent->SetRelativeTransform(GetVisualAttachOffset(SlotTag));
+		Slot->AttachedVisualItemId = Slot->EquippedItem.InstanceId;
 		OnVisualAttached.Broadcast(SlotTag);
 	}
 
 	// Animation layer support
+	Slot->AttachedAnimLayerClass = EquipFrag->AnimLayerClass;
 	if (EquipFrag->AnimLayerClass)
 	{
 		OwnerMesh->LinkAnimClassLayers(EquipFrag->AnimLayerClass);
@@ -949,20 +958,32 @@ void UEquipmentManagerComponent::RemoveVisuals(FGameplayTag SlotTag)
 		Slot->AttachedVisualComponent->DestroyComponent();
 		Slot->AttachedVisualComponent = nullptr;
 	}
+	Slot->AttachedVisualItemId.Invalidate();
 
-	// Unlink animation layers if applicable
-	if (Slot->bIsOccupied)
+	// Unlink the layer the visual's item linked (after a swap the slot already holds another item, whose fragment names
+	// another layer: G153); a slot that never linked one through OnMeshLoaded falls back to the item it holds.
+	TSubclassOf<UAnimInstance> LayerClass = Slot->AttachedAnimLayerClass;
+	if (!LayerClass && Slot->bIsOccupied)
 	{
-		UItemFragment_Equipment* EquipFrag = GetEquipmentFragment(Slot->EquippedItem);
-		if (EquipFrag && EquipFrag->AnimLayerClass)
+		if (const UItemFragment_Equipment* EquipFrag = GetEquipmentFragment(Slot->EquippedItem))
 		{
-			USkeletalMeshComponent* OwnerMesh = GetOwnerMesh();
-			if (OwnerMesh)
-			{
-				OwnerMesh->UnlinkAnimClassLayers(EquipFrag->AnimLayerClass);
-			}
+			LayerClass = EquipFrag->AnimLayerClass;
 		}
 	}
+	Slot->AttachedAnimLayerClass = nullptr;
+	if (LayerClass)
+	{
+		if (USkeletalMeshComponent* OwnerMesh = GetOwnerMesh())
+		{
+			OwnerMesh->UnlinkAnimClassLayers(LayerClass);
+		}
+	}
+}
+
+bool UEquipmentManagerComponent::IsVisualStale(const FEquipmentSlot& Slot)
+{
+	return Slot.bIsOccupied && Slot.AttachedVisualComponent && Slot.AttachedVisualItemId.IsValid()
+		&& Slot.AttachedVisualItemId != Slot.EquippedItem.InstanceId;
 }
 
 USkeletalMeshComponent* UEquipmentManagerComponent::GetOwnerMesh() const
