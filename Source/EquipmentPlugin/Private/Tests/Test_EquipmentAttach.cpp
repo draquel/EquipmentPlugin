@@ -41,4 +41,43 @@ bool FEquipAttach_BoneOverride::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ===========================================================================
+// IsVisualStale (G153): a client's view of a hotbar swap is one replication of an occupied slot holding another item.
+// The slot's visual is stale when it was built for another item id; an empty slot, a slot with no visual, a visual not yet
+// bound to an item, or the same item are not.
+// ===========================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEquipAttach_VisualStale,
+	"Equipment.Visuals.StaleAfterSwap",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEquipAttach_VisualStale::RunTest(const FString& Parameters)
+{
+	UStaticMeshComponent* Visual = NewObject<UStaticMeshComponent>();
+	Visual->AddToRoot();
+
+	FEquipmentSlot Slot;
+	Slot.SlotTag = FGameplayTag::RequestGameplayTag(TEXT("Equipment.Slot.MainHand"), false);
+	TestFalse("An empty slot is not stale", UEquipmentManagerComponent::IsVisualStale(Slot));
+
+	Slot.bIsOccupied = true;
+	Slot.EquippedItem.InstanceId = FGuid::NewGuid();
+	TestFalse("An occupied slot with no visual is not stale", UEquipmentManagerComponent::IsVisualStale(Slot));
+
+	Slot.AttachedVisualComponent = Visual;
+	TestFalse("A visual not yet bound to an item is not stale", UEquipmentManagerComponent::IsVisualStale(Slot));
+
+	Slot.AttachedVisualItemId = Slot.EquippedItem.InstanceId;
+	TestFalse("The same item is not stale", UEquipmentManagerComponent::IsVisualStale(Slot));
+
+	Slot.EquippedItem.InstanceId = FGuid::NewGuid(); // the swap: another item replicated into the occupied slot
+	TestTrue("Another item in the slot: stale", UEquipmentManagerComponent::IsVisualStale(Slot));
+
+	Slot.bIsOccupied = false;
+	TestFalse("Emptied: not stale (it is removed instead)", UEquipmentManagerComponent::IsVisualStale(Slot));
+
+	Visual->RemoveFromRoot();
+	return true;
+}
+
 #endif // WITH_AUTOMATION_TESTS
