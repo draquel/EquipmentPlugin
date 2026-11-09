@@ -27,11 +27,14 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEquippedItemBroken, FGameplayTag
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnCarriedLightChanged, FGameplayTag, SlotTag, bool, bLit, float, FuelSeconds, float, MaxFuel);
 /** A slot's visual finished loading and was attached (every machine; meshes load asynchronously after the equip). */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEquipmentVisualAttached, FGameplayTag, SlotTag);
+/** A sheath's item was drawn into its hand or put back (every machine; on clients from the replicated slots). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEquipmentDrawnChanged, FGameplayTag, SlotTag, bool, bDrawn);
 
 /**
  * Manages equipment slots on a character. Handles equip/unequip flow,
  * visual attachment, inventory integration, and multiplayer replication.
  * GAS integration is handled by the optional EquipmentGASIntegration module (Phase 9).
+ * Sheaths (slots with a DrawSlotTag) carry weapons on the body and draw them into a hand (EQUIPMENT_SYSTEM.md, "Sheaths").
  */
 UCLASS(BlueprintType, ClassGroup = "Equipment", meta = (BlueprintSpawnableComponent))
 class EQUIPMENTPLUGIN_API UEquipmentManagerComponent : public UActorComponent
@@ -94,15 +97,18 @@ public:
 	 * there takes the inventory slot the new one leaves (one validated exchange, UInventoryComponent::TryReplaceItem),
 	 * or the equip is refused: nothing is lost (G90). A client sends the instance id; the server equips the item it holds
 	 * under that id, from an inventory of the same player (G91).
+	 * An item with a sheath on this owner goes into the sheath (its preferred slot); asked into the sheath's hand, it goes
+	 * into the sheath drawn.
 	 * @param ItemInstanceId  The item in SourceInventory
 	 * @param SourceInventory The inventory holding it
 	 * @param SlotTag         The slot (invalid = the item's preferred slot)
+	 * @param bDraw           Draw the item into its hand once it is in its sheath (the previously drawn one is sheathed)
 	 * @return Success (optimistic on a client); InvalidItem (not in the inventory), IncompatibleSlot, NoInventorySpace
-	 *         (the replaced item cannot take the slot), Failed
+	 *         (the replaced item cannot take the slot), Failed; with bDraw, the draw's refusal after the equip (TryDraw)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Equipment")
 	EEquipmentResult TryEquipFromInventory(const FGuid& ItemInstanceId,
-		UInventoryComponent* SourceInventory, FGameplayTag SlotTag);
+		UInventoryComponent* SourceInventory, FGameplayTag SlotTag, bool bDraw = false);
 
 	/**
 	 * Unequip to an inventory: the item leaves the slot and is added to the inventory, or stays equipped.
@@ -112,6 +118,66 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Equipment")
 	EEquipmentResult TryUnequipToInventory(FGameplayTag SlotTag, UInventoryComponent* TargetInventory);
+
+	// -----------------------------------------------------------------------
+	// Sheaths (the equipment sheathing plan, D77)
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Draw a sheath's item into its hand: the item drawn into that hand before goes back to its own sheath, and an item in
+	 * the hand slot itself goes to Inventory. Its abilities, effects and stance layer apply from here. A client sends the
+	 * request; the server runs the same predicate.
+	 * @param SheathSlotTag The sheath
+	 * @param Inventory     Where an item in the hand slot itself goes (one of the same player's; may be null)
+	 * @return Success (also when already drawn; optimistic on a client); IncompatibleSlot (no sheath, or no such hand);
+	 *         InvalidItem (an empty sheath); SlotOccupied (the hand slot holds an item and no inventory was given);
+	 *         NoInventorySpace (the inventory cannot take it)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Equipment|Sheath")
+	EEquipmentResult TryDraw(FGameplayTag SheathSlotTag, UInventoryComponent* Inventory = nullptr);
+
+	/**
+	 * Put the item drawn into a hand back in its sheath (its abilities and effects revoked).
+	 * @param SlotTag The hand (Equipment.Slot.MainHand) or the sheath itself
+	 * @return Success (optimistic on a client); Failed when nothing drawn is there
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Equipment|Sheath")
+	EEquipmentResult TrySheathe(FGameplayTag SlotTag);
+
+	/**
+	 * The slot whose item is in a hand: the hand slot when it holds an item, else the sheath drawn into it. What every
+	 * caller asking "what is in the main hand" reads.
+	 * @param HandSlotTag The hand
+	 * @return The slot; invalid when the hand is empty
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Equipment|Sheath")
+	FGameplayTag GetHeldSlotTag(FGameplayTag HandSlotTag) const;
+
+	/**
+	 * The item in a hand (GetHeldSlotTag's slot's item).
+	 * @param HandSlotTag The hand
+	 * @return The item; invalid when the hand is empty
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Equipment|Sheath")
+	FItemInstance GetHeldItem(FGameplayTag HandSlotTag) const;
+
+	/**
+	 * @param SlotTag A slot
+	 * @return True when the slot is a sheath whose item is drawn
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Equipment|Sheath")
+	bool IsDrawn(FGameplayTag SlotTag) const;
+
+	/**
+	 * @param SlotTag A slot
+	 * @return True when the slot is a sheath (its definition names a hand)
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Equipment|Sheath")
+	bool IsSheathSlot(FGameplayTag SlotTag) const;
+
+	/** A sheath's item was drawn or sheathed (every machine). */
+	UPROPERTY(BlueprintAssignable, Category = "Equipment|Events")
+	FOnEquipmentDrawnChanged OnDrawnChanged;
 
 	// -----------------------------------------------------------------------
 	// Queries
@@ -227,6 +293,17 @@ public:
 	FTransform GetVisualAttachOffset(FGameplayTag SlotTag) const;
 
 	/**
+	 * GetVisualAttachOffset for a given state of a sheath's item: in the hand (the item's hand fit on the hand slot's
+	 * bone) or sheathed (its SheathOffset on the sheath's). Owners that animate the hand-off seat the visual by their
+	 * montage, not by the state (VoxelCharacterPlugin). For a slot that is no sheath the state is ignored.
+	 * @param SlotTag The slot
+	 * @param bInHand The state to answer for
+	 * @return The relative transform
+	 */
+	UFUNCTION(BlueprintPure, Category = "Equipment|Visuals")
+	FTransform GetVisualAttachOffsetForState(FGameplayTag SlotTag, bool bInHand) const;
+
+	/**
 	 * The bone or socket a slot's visual attaches to: the equipped item's AttachBoneOverride, else the slot's own.
 	 * Owners that re-attach visuals themselves start from this.
 	 * @param SlotTag The slot
@@ -236,7 +313,18 @@ public:
 	FName GetVisualAttachSocket(FGameplayTag SlotTag) const;
 
 	/**
-	 * The bone the equipped item asks for instead of its slot's (its Equipment fragment's AttachBoneOverride).
+	 * GetVisualAttachSocket for a given state of a sheath's item: the hand's bone (or the item's AttachBoneOverride) in the
+	 * hand, the sheath's (or its SheathBoneOverride) sheathed. For a slot that is no sheath the state is ignored.
+	 * @param SlotTag The slot
+	 * @param bInHand The state to answer for
+	 * @return The bone or socket; None for an unknown slot
+	 */
+	UFUNCTION(BlueprintPure, Category = "Equipment|Visuals")
+	FName GetVisualAttachSocketForState(FGameplayTag SlotTag, bool bInHand) const;
+
+	/**
+	 * The bone the equipped item asks for instead of its slot's (its Equipment fragment's AttachBoneOverride; a sheathed
+	 * item's SheathBoneOverride).
 	 * @param SlotTag The slot
 	 * @return The bone; None when the item uses the slot's, or the slot is empty or unknown
 	 */
@@ -321,7 +409,13 @@ private:
 
 	UFUNCTION(Server, Reliable)
 	void ServerRPC_RequestEquipFromInventory(const FGuid& ItemInstanceId,
-		UInventoryComponent* SourceInventory, FGameplayTag SlotTag);
+		UInventoryComponent* SourceInventory, FGameplayTag SlotTag, bool bDraw);
+
+	UFUNCTION(Server, Reliable)
+	void ServerRPC_RequestDraw(FGameplayTag SheathSlotTag, UInventoryComponent* Inventory);
+
+	UFUNCTION(Server, Reliable)
+	void ServerRPC_RequestSheathe(FGameplayTag SlotTag);
 
 	UFUNCTION(Server, Reliable)
 	void ServerRPC_RequestUnequipToInventory(FGameplayTag SlotTag, UInventoryComponent* TargetInventory);
@@ -337,8 +431,17 @@ private:
 	// Internal
 	// -----------------------------------------------------------------------
 
-	/** Find the target slot for an item based on its EquipmentSlotTag */
+	/** Find the target slot for an item: its sheath when this owner has one (SheathSlotTag), else its EquipmentSlotTag's */
 	FGameplayTag FindTargetSlot(const FItemInstance& Item) const;
+
+	/** A slot with this tag or a child of it: an empty one first, else the first occupied (invalid when none). */
+	FGameplayTag FindSlotMatching(FGameplayTag Tag) const;
+
+	/**
+	 * An item with a sheath on this owner, asked into that sheath's hand, goes into the sheath drawn: retarget InOutSlotTag
+	 * and set bInOutDraw. Other requests are left as they are.
+	 */
+	void ResolveSheathTarget(const FItemInstance& Item, FGameplayTag& InOutSlotTag, bool& bInOutDraw) const;
 
 	/** Validate that an item can go into a specific slot */
 	EEquipmentResult ValidateEquip(const FItemInstance& Item, FGameplayTag SlotTag) const;
@@ -348,13 +451,38 @@ private:
 	 * the slot (InOutSlotTag resolved from the item when invalid).
 	 */
 	EEquipmentResult ValidateEquipFromInventory(const FGuid& ItemInstanceId, const UInventoryComponent* SourceInventory,
-		FGameplayTag& InOutSlotTag, FItemInstance& OutItem) const;
+		FGameplayTag& InOutSlotTag, FItemInstance& OutItem, bool& bInOutDraw) const;
+
+	/** The draw's predicate, run by the caller and again by the server (TryDraw's results). */
+	EEquipmentResult ValidateDraw(FGameplayTag SheathSlotTag, const UInventoryComponent* Inventory) const;
+
+	/** The authoritative draw (TryDraw on the authority, and its RPC). */
+	EEquipmentResult DrawSheath(FGameplayTag SheathSlotTag, UInventoryComponent* Inventory);
+
+	/** The sheath a TrySheathe names: the slot itself when it is a sheath, else the sheath drawn into that hand. */
+	const FEquipmentSlot* FindSheatheTarget(FGameplayTag SlotTag) const;
+
+	/** The sheath drawn into a hand, if any. */
+	FEquipmentSlot* FindDrawnSheath(FGameplayTag HandSlotTag);
+	const FEquipmentSlot* FindDrawnSheath(FGameplayTag HandSlotTag) const;
+
+	/** Authority: draw or sheathe a sheath's item (GAS, the visual's seat, the layer, the events). */
+	void SetDrawnInternal(FEquipmentSlot& Slot, bool bDrawn);
+
+	/**
+	 * Every machine: seat the slot's visual for its state, link or unlink its stance layer, and announce a change of the
+	 * drawn state this machine had not acted on yet (OnDrawnChanged).
+	 */
+	void ApplyHandState(FEquipmentSlot& Slot);
+
+	/** Link the stance layer of the slot's item while it is in the hand, unlink the one linked otherwise. */
+	void RefreshSlotLayer(FEquipmentSlot& Slot);
 
 	/** Unequip-to-inventory's predicate: the slot holds an item and the inventory can take it. */
 	EEquipmentResult ValidateUnequipToInventory(FGameplayTag SlotTag, const UInventoryComponent* TargetInventory) const;
 
 	/** The authoritative equip from an inventory (TryEquipFromInventory on the authority, and its RPC). */
-	EEquipmentResult EquipFromInventory(const FGuid& ItemInstanceId, UInventoryComponent* SourceInventory, FGameplayTag SlotTag);
+	EEquipmentResult EquipFromInventory(const FGuid& ItemInstanceId, UInventoryComponent* SourceInventory, FGameplayTag SlotTag, bool bDraw);
 
 	/** The authoritative unequip to an inventory (TryUnequipToInventory on the authority, and its RPC). */
 	EEquipmentResult UnequipToInventory(FGameplayTag SlotTag, UInventoryComponent* TargetInventory);
