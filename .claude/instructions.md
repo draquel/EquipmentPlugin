@@ -1,6 +1,6 @@
 # EquipmentPlugin — Plugin Instructions
 
-> State as of 2026-11-02 (code review CR5).
+> State as of 2026-11-08 (sheaths, the equipment sheathing plan; before it code review CR5).
 
 ## Purpose
 
@@ -78,6 +78,10 @@ EquipmentPlugin/
    durability. A change to an equipped item's fragment goes through `EditFragment` on the slot's own item
    (`Slot.EquippedItem`), never through a copy or a pointer `FindFragment` returned: only the revision it bumps tells
    replication the item changed (G136).
+11. **Sheaths (D76).** A carried weapon lives in its sheath slot (`DrawSlotTag` set) and is drawn by a state, never moved
+   into the hand slot: one home per item. Ask the hand with `GetHeldSlotTag` / `GetHeldItem`, never `MainHand` alone; a
+   sheath's GAS and stance layer apply only while drawn; one item per hand (a draw sheathes the other, an equip into the
+   hand slot sheathes the drawn one). The manager knows no animation: owners decide when to call `TryDraw`.
 
 ## Build.cs Dependencies
 
@@ -95,7 +99,8 @@ PrivateDependencyModuleNames: EquipmentPlugin, ItemInventoryPlugin
 ## Logging, Commands and Tests
 
 - Log categories `LogEQP` (`EquipmentPlugin.h`) and `LogEQPGAS` (`EquipmentGASIntegration.h`).
-- Console commands `Equipment.Equip <DefName> <SlotTag>` and `Equipment.UnequipAll`
+- Console commands `Equipment.Equip <DefName> <SlotTag>`, `Equipment.UnequipAll`, `Equipment.Draw <SheathSlotTag>` and
+  `Equipment.Sheathe [SlotTag]`
   (`Documentation/EDITOR_CONSOLE_GUIDE.md`).
 - Tests under `Equipment.*` in each module's `Private/Tests/`, on the real `Equipment.Slot.*` tags; tests that need the
   item database use `CGFTesting::FTestGameInstance` (CommonGameFramework); `Equipment.Authority.ClientRequests` plays a

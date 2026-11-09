@@ -1,6 +1,6 @@
 # Equipment Sheathing Plan: weapons carried on the body, drawn into the hand
 
-> **Draft 2026-11-08, waiting for the user's decisions (D76-D81, §6).** Nothing below is built yet. Owner:
+> **Agreed 2026-11-08 as drafted, every decision as recommended (D76-D81, §6).** Being built, S1 first. Owner:
 > EquipmentPlugin (the slots, the drawn state, the visuals); the fragment's fields in ItemInventoryPlugin, the tags in
 > CommonGameFramework; the character's input, montages, save and HUD in VoxelCharacterPlugin; the content scripts, the
 > replication test and the QA rows in the parent. Terms: `Documentation/GLOSSARY.md`. Numbers: D76-D81 and, for findings,
