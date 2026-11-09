@@ -77,6 +77,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "EquipmentSlot")
 	void SetHeld(bool bInHeld);
 
+	/**
+	 * The slot's background: gold while grabbed by click-to-move, blue while the slot is a sheath whose weapon is drawn
+	 * (the equipment sheathing plan), else the default.
+	 * @param bHeld  Grabbed by click-to-move
+	 * @param bDrawn A sheath's weapon is in the hand
+	 * @return The colour
+	 */
+	static FLinearColor BackgroundColorFor(bool bHeld, bool bDrawn);
+
 protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativeDestruct() override;
@@ -85,6 +94,9 @@ protected:
 
 private:
 	void BuildWidgetTree();
+
+	/** Colour the background by the grab and the slot's drawn state (BackgroundColorFor). */
+	void ApplyBackgroundColor();
 
 	UFUNCTION()
 	void HandleEquipmentChanged();
