@@ -1,10 +1,16 @@
 # Equipment Sheathing Plan: weapons carried on the body, drawn into the hand
 
-> **Agreed 2026-11-08 as drafted, every decision as recommended (D77-D82, §6).** Being built, S1 first. Owner:
-> EquipmentPlugin (the slots, the drawn state, the visuals); the fragment's fields in ItemInventoryPlugin, the tags in
-> CommonGameFramework; the character's input, montages, save and HUD in VoxelCharacterPlugin; the content scripts, the
-> replication test and the QA rows in the parent. Terms: `Documentation/GLOSSARY.md`. Numbers: D77-D82 and, for findings,
-> G159 on (`Documentation/FINDINGS.md`).
+> **Frozen 2026-11-09.** This plan is history: agreed 2026-11-08 as drafted, every decision as recommended (D77-D82,
+> §6; numbered D76-D81 until the bow aim fixes took D76 the same day), S1-S4 built 2026-11-08/09. Built: sheath slots
+> with a replicated drawn state (EquipmentPlugin), the fragment's sheath fields (ItemInventoryPlugin), the sheath tags
+> (CommonGameFramework); the character's three sheaths, R / X / F, the unsheathe and sheathe montages with a hand-off
+> measured from each clip, the attacks and the action set on the held weapon, the save, the panel's drawn frame and the
+> carried strip (VoxelCharacterPlugin); the fits, the inputs, the replication steps and the QA rows F2-10..13 and
+> F13-18..21 (the parent). As it is now: `EQUIPMENT_SYSTEM.md` ("Sheaths", "UI Widgets"), `CHARACTER_SYSTEM.md`
+> ("Items, progression and saves" › Carried weapons, "Animation", "Input", "HUD and widgets"), the console guide. The
+> one finding the build left open is G162 (the draw over the whole body). Owner as planned: EquipmentPlugin; the
+> fragment in ItemInventoryPlugin, the tags in CommonGameFramework, the character in VoxelCharacterPlugin, the content,
+> the replication test and the QA rows in the parent.
 
 ## 1. What exists
 
@@ -168,6 +174,14 @@ the server, the client sees the drawn slot, the visual on `hand_r` and the set c
   sheathe results, one per hand, the bag-full refusal, GAS on draw, held queries, the stale re-seat predicate, a client's
   request as an RPC). Docs: `EQUIPMENT_SYSTEM.md` ("Sheaths"), the plugin's instructions.
 
+**S1 result (2026-11-08).** As designed (§3.1). The client's equip-and-draw checks only the equip at home (the draw's
+check needs the equip done) and the server answers a refused draw through `OnOperationFailed`; a draw asked of a sheath
+already drawn is `Success`. An item equipped into a sheath always arrives sheathed, also when its slot's previous
+occupant was drawn. Tests `Equipment.Sheath.TargetSlot`, `DrawAndSheathe`, `GASWhileDrawn`, `AttachByState`,
+`FromInventoryDraw`, `ClientRequests`. Gates: the build and the non-unity build of the changed modules clean, the
+headless suite 876/876, the in-editor gate 27/27. PRs: CommonGameFramework#21, ItemInventoryPlugin#23,
+EquipmentPlugin#18, UE5_PluginDev#374.
+
 ### S2: The character (L)
 - The sheath slot definitions on `AVCCharacterBase`; `IA_Sheathe` (R) and `IA_CycleWeapon` (X) by
   `Scripts/add_input_action.py`; F's equip-and-draw; `GetHeldItem(MainHand)` in the action set, the primary chain, the
@@ -182,6 +196,19 @@ the server, the client sees the drawn slot, the visual on `hand_r` and the set c
   mining speed only drawn, the save round trip with a drawn and a sheathed weapon, the hand-off time from a montage).
   Docs: `CHARACTER_SYSTEM.md` ("Items, progression and saves", "The primary action", "Input", "Animation").
 
+**S2 result (2026-11-09).** The sequence lives in `VCCharacterBase_Sheath.cpp`: `RunSheathSequence` sheathes the drawn
+weapon, then after that montage's length unsheathes the wanted one; the owner plays both at input, the server plays them
+to the rest (`PlaySheathActionForEveryone`, its own multicast carrying the weapon's set and the sheath, since an
+unsheathe starts under the Unarmed set), sheathes at once and draws at the hand-off by a timer. The visual's hand-off is
+`UVCActionMontageComponent::IsSheathHandOffPending` read by `UpdateEquipmentAttachments` each tick while a montage plays
+(`UpdateSheathHandOff`). Differences from §3.3: a hit react does not cancel an unsheathe (death and downing do; the
+timer checks `IsIncapacitated`); the montages play in the default slot over the whole body, not the upper body, since
+the Unarmed graph has no upper-body slot (G162). The melee and ranged abilities read `GetHeldItem` / wear
+`GetHeldSlotTag` (two lines each, beside the bow aim fixes' open VoxelCharacterPlugin#85, which touches other lines of the
+ranged file); `UnequipSlotToInventory` resolves a hand to the slot holding what is in it (the panel's double-click on
+Main Hand, `vox.Unequip`). Tests `VoxelCharacter.EquipmentLoop.SheathSlots`, `SheathActionSet`, `SheathSaveEntry`,
+`SheathHandOffTime`.
+
 ### S3: The content and the fit (M)
 - `setup_character_layers.py`: the Unsheathe / Sheathe montages and the hand-off notify per §3.2, the sets' maps.
 - `configure_item_visuals.py` / `configure_ranged_items.py`: each weapon's `SheathSlotTag` and `SheathOffset`; the
@@ -189,6 +216,31 @@ the server, the client sees the drawn slot, the visual on `hand_r` and the set c
 - The fit on `CharacterTest`, both bodies (`vc.Appearance`), `vc.Equip.Nudge` per sheath: at rest, walking, running, a
   draw and a sheathe of each; Kellan's `AttachCorrections` for `pelvis` / `spine_05` if he needs them. Screenshots in
   `Saved/Screenshots/Claudius/sheath_*`.
+
+**S3 result (2026-11-09).**
+- **The hand-off measured, not judged by eye.** `setup_character_layers.py` reads each clip's bone poses
+  (`AnimationLibrary.get_bone_poses_for_time`, composed down the Mannequin's chains) and puts `UVCAnimNotify_ItemHandOff`
+  where the weapon's hand (`hand_r`; the bow's `hand_l`) comes nearest the sheath's bone (`thigh_l` for the hip, `spine_05`
+  for the back), within 10-80% of an unsheathe and 20-95% of a sheathe; the report keeps the fraction and the distance
+  (`Saved/CharacterLayersSetup.json`). SwordShield's hip: out at 0.228 (24 uu), in at 0.5; the back (TwoHand, Bow): out
+  at 0.263, in at 0.512; the bow's left hand 32 uu off the spine at its hand-off. The montages: `AM_<Set>_Unsheathe_<Sheath>`
+  and `AM_<Set>_Sheathe_<Sheath>` for SwordShield (HipLeft), TwoHand (Back), Tool (Belt) and Bow (Back).
+- **The belt moved to the small of the back.** The pickaxe's stand-in clip (the two-handed sword's hip draw) reaches for
+  the left hip; a pickaxe on the right hip would have left the hand closing on air. It lies across the small of the back,
+  its handle's end at the left hip, the head to the right, where that hand meets it.
+- **Fits computed from a wanted pose.** Rather than nudging, `Saved/claudius_sheath_fit.py` (a PIE helper) takes the
+  pose wanted in the body's frame (an anchor bone, offsets along forward / right / up, the long axis and +X) and turns it
+  into the sheath bone's space on the low-poly body; the results are `configure_item_visuals.py`'s `SHEATHS` and
+  `configure_ranged_items.py`'s `BOW_SHEATH_FIT`. The sword hangs at the left hip, hilt forward, blade down and back; the
+  bow crosses the back, its top over the right shoulder. Kellan wears the same fits a few cm off his slimmer hips: no
+  `AttachCorrections` entry was needed to read right, one per bone can tighten it later.
+- **Checked in PIE on `CharacterTest`** (screenshots `Saved/Screenshots/Claudius/fit2_*`, `draw_t*`, `kellan_*`,
+  `bow_t*`): F on the pickaxe, the sword and the bow carries each and draws it, the one before going back (about 2 s per
+  switch: the sheathe, then the unsheathe to its hand-off); the sword is in the right hand 0.3 s into its draw; the bow
+  comes off the back into the left hand.
+- The inputs: `IA_Sheathe` (R) and `IA_CycleWeapon` (X) by `add_input_action.py`. This worktree's
+  `Content/CharacterAnimation` was a junction into the main checkout's pack; it became a private copy before the layers
+  script ran, so the main checkout's pack is untouched until its own run after the merge.
 
 ### S4: The UI, the replication step, the close (M)
 - `UEquipmentSlotWidget::SetDrawn`, the Main Hand slot's held item; `UVCCarriedWeaponsWidget` on the HUD.
@@ -198,6 +250,15 @@ the server, the client sees the drawn slot, the visual on `hand_r` and the set c
   string); `QA_TEST_PLAN.md` regenerated.
 - The console guide's rows; FINDINGS; this plan frozen with a results paragraph in `EQUIPMENT_SYSTEM.md` and
   `CHARACTER_SYSTEM.md`.
+
+**S4 result (2026-11-09).** The panel: `UEquipmentSlotWidget` frames a drawn sheath blue (`BackgroundColorFor`; gold
+stays the click-to-move grab) and a hand slot shows the weapon drawn into it, dimmed. The strip: `UVCCarriedWeaponsWidget`
+above the hotbar, one icon per carried weapon in the sheaths' order, the drawn one lit, the R / X hint; rebound with the
+vitals. The replication test's steps 18 and 19: a dagger carried in a hip sheath, drawn at the client's request (the
+sword in the hand slot goes to the bag) and sheathed, each state reaching the client and its `OnRep` acting on it. Tests
+`Equipment.Sheath.SlotWidgetColour`, `VoxelCharacter.EquipmentLoop.SheathCarriedStrip`. Gates: the headless suite
+882/882, the in-editor gate 27/27 with the replication test, parity identical. QA rows F2-10..13, F13-18..21; F2-04's
+expected result now keeps the old weapon on the body.
 
 Each phase: a PR per repository into `dev`, the gates of `Scripts/qa/README.md` (S1 and S2 the headless suites and the
 editor gate with the replication test; S3 the content scripts on a clean run and the fit shots; S4 the editor gate).

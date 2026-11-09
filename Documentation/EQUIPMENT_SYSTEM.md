@@ -198,7 +198,7 @@ sheath's.
   `EquipmentSlotTag` slot, so an owner without sheaths (the NPCs, another game) equips as before. An equip of a sheathable
   item asked into its sheath's hand (the panel's Main Hand, an old save's main-hand entry) goes into the sheath, drawn
   (`ResolveSheathTarget`, in `TryEquipToSlot` and `ValidateEquipFromInventory`). A sheath's item arrives sheathed.
-- **Draw and sheathe.** `TryDraw(SheathSlotTag, Inventory)` and `TrySheathe(HandOrSheathTag)`, each a request from a
+- **Draw and sheathe.** `TryDraw(SheathSlotTag, Inventory)` and `TrySheathe(SlotTag)` (the hand, or the sheath itself), each a request from a
   client (`ServerRPC_RequestDraw`, `ServerRPC_RequestSheathe`) with one predicate on both sides, `ValidateDraw`
   (D-CR16): `IncompatibleSlot` (no sheath, no such hand), `InvalidItem` (an empty sheath), `SlotOccupied` (the hand slot
   itself holds an item and no inventory was given), `NoInventorySpace`. **One item per hand**: a draw sends the sheath
@@ -345,7 +345,10 @@ manager's changes and durability.
 
 - `NativeOnMouseButtonDown`: left click → `OnSlotClicked(SlotTag, EquipmentManager)`, right click →
   `OnSlotRightClicked`; both `FOnEquipmentSlotClicked(FGameplayTag SlotTag, UEquipmentManagerComponent* EquipmentManager)`.
-- `SetHeld(bool)`: gold `(0.8, 0.6, 0.2, 0.9)` while held by click-to-move, default `(0.08, 0.08, 0.12, 0.9)`.
+- `SetHeld(bool)`: gold `(0.8, 0.6, 0.2, 0.9)` while held by click-to-move, blue `(0.2, 0.42, 0.7, 0.9)` while the slot is a
+  sheath whose weapon is drawn, default `(0.08, 0.08, 0.12, 0.9)` (`BackgroundColorFor`).
+- A hand slot shows what is in the hand: its own item, or, dimmed, the weapon drawn from a sheath (`GetHeldSlotTag`); its
+  tooltip is that weapon's. The sheaths appear as slots of their own (from `AvailableSlots`, no code).
 - The icon starts `Collapsed`; `RefreshSlot()` makes it `SelfHitTestInvisible` while an item is equipped, so clicks reach
   the slot.
 
@@ -388,13 +391,14 @@ id, simulated server/client with `CGFTesting::FRPCCall`; another player's invent
 the sheath drawn), `Sheath.DrawAndSheathe` (the results, one item per hand, the hand slot's item to the bag),
 `Sheath.GASWhileDrawn`, `Sheath.AttachByState` (the bones and fits sheathed and drawn, the item's own bones),
 `Sheath.FromInventoryDraw` (equip and draw in one request, the old weapon kept in its sheath), `Sheath.ClientRequests`
-(the client's predicate and requests, `OnRep_EquipmentSlots` acting on a draw and a sheathe),
+(the client's predicate and requests, `OnRep_EquipmentSlots` acting on a draw and a sheathe), `Sheath.SlotWidgetColour`,
 `Durability.EmptySlotHasNone`, `Durability.LossMarksTheItem` (the worn item is no longer `Identical` to its state
 before, G136), `LightSource.IntensityRule` / `NothingCarried`, and
 `GAS.ResolvesAbilitySystemThroughInterface` in the GAS module. VoxelCharacterPlugin's `VoxelCharacter.EquipmentLoop.*` tests cover
 the stat effect end to end. The equip flow above over a real connection (a dedicated server and a client in PIE: the
 request, the server's checks, the replicated slot and `OnRep_EquipmentSlots`, a rack's sword at its first replication,
-the equipped sword's durability worn on the server reaching the client's `GetDurability`) is the game module's
+the equipped sword's durability worn on the server reaching the client's `GetDurability`, a dagger carried in a sheath
+drawn and sheathed at the client's request reaching the client in that state) is the game module's
 `VoxelEngine.Replication.Framework`, run by the in-editor gate.
 
 ---

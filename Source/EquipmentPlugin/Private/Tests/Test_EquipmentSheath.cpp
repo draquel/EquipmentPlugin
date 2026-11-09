@@ -8,6 +8,7 @@
 #include "Testing/CGFTestGameInstance.h"
 #include "Types/CGFEquipmentTypes.h"
 #include "Types/CGFItemTypes.h"
+#include "UI/EquipmentSlotWidget.h"
 
 #if WITH_AUTOMATION_TESTS
 
@@ -513,6 +514,25 @@ bool FEquipmentSheathClientTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("The client acted on the sheathe"), ClientHip->bAppliedDrawn);
 
 	Release(Database, { Sword });
+	return true;
+}
+
+// ===========================================================================
+// The equipment panel's slot: a drawn sheath is framed blue, a grab stays gold over it
+// ===========================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEquipmentSheathSlotColourTest,
+	"Equipment.Sheath.SlotWidgetColour",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEquipmentSheathSlotColourTest::RunTest(const FString& Parameters)
+{
+	const FLinearColor Plain = UEquipmentSlotWidget::BackgroundColorFor(false, false);
+	const FLinearColor Drawn = UEquipmentSlotWidget::BackgroundColorFor(false, true);
+	const FLinearColor Grabbed = UEquipmentSlotWidget::BackgroundColorFor(true, false);
+	TestFalse(TEXT("A drawn sheath stands out from a plain slot"), Drawn.Equals(Plain));
+	TestFalse(TEXT("A drawn sheath is not the grab's gold"), Drawn.Equals(Grabbed));
+	TestTrue(TEXT("A grab is gold whatever the slot's state"), UEquipmentSlotWidget::BackgroundColorFor(true, true).Equals(Grabbed));
 	return true;
 }
 
