@@ -43,12 +43,12 @@ struct EQUIPMENTPLUGIN_API FEquipmentSlot
 	UPROPERTY()
 	FGameplayTagContainer AcceptedItemTags;
 
-	/** Set on a sheath: the hand slot its item is drawn into (copied from FEquipmentSlotDefinition::DrawSlotTag, D76). */
+	/** Set on a sheath: the hand slot its item is drawn into (copied from FEquipmentSlotDefinition::DrawSlotTag, D77). */
 	UPROPERTY(BlueprintReadOnly)
 	FGameplayTag DrawSlotTag;
 
 	/**
-	 * A sheath's item is in its hand (D76): its visual rides the hand with the item's hand fit, and its abilities, effects
+	 * A sheath's item is in its hand (D77): its visual rides the hand with the item's hand fit, and its abilities, effects
 	 * and stance layer apply. Always false on a slot that is no sheath. Changed on the authority (TryDraw, TrySheathe).
 	 */
 	UPROPERTY(BlueprintReadOnly)

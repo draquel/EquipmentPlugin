@@ -12,7 +12,7 @@
 #if WITH_AUTOMATION_TESTS
 
 // ---------------------------------------------------------------------------
-// Sheaths (the equipment sheathing plan, D76): a carried weapon lands in its sheath, is drawn into its hand and put
+// Sheaths (the equipment sheathing plan, D77): a carried weapon lands in its sheath, is drawn into its hand and put
 // back, one item per hand, its GAS only while drawn, its visual's bone and fit by the state, the client's requests. As
 // the other equipment tests: a standalone game instance holds the definitions, the slots are built directly (play has
 // not begun), a client is an AutonomousProxy actor whose RPCs reach the server's component through CGFTesting::FRPCCall.

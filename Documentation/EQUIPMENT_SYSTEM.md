@@ -183,10 +183,10 @@ light slot refreshes its light from the replicated durability (sent when it chan
 
 ## Sheaths
 
-Weapons carried on the body and drawn into the hand when used (the equipment sheathing plan, 2026-11-08, D76-D81;
+Weapons carried on the body and drawn into the hand when used (the equipment sheathing plan, 2026-11-08, D77-D82;
 `EQUIPMENT_SHEATHING_PLAN.md`).
 
-**The model (D76).** A sheath is a slot whose definition names a hand, `DrawSlotTag` (Equipment.Slot.MainHand for the
+**The model (D77).** A sheath is a slot whose definition names a hand, `DrawSlotTag` (Equipment.Slot.MainHand for the
 character's `Equipment.Slot.Sheath.HipLeft`, `.Back`, `.Belt`). The item names its sheath and its fit there in its
 Equipment fragment (ItemInventoryPlugin): `SheathSlotTag` (a sheath or a parent of several), `SheathOffset`,
 `SheathBoneOverride`; `EquipmentSlotTag`, `AttachOffset` and `AttachBoneOverride` stay the hand it is used in and its fit

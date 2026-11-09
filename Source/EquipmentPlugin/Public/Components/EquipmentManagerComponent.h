@@ -120,7 +120,7 @@ public:
 	EEquipmentResult TryUnequipToInventory(FGameplayTag SlotTag, UInventoryComponent* TargetInventory);
 
 	// -----------------------------------------------------------------------
-	// Sheaths (the equipment sheathing plan, D76)
+	// Sheaths (the equipment sheathing plan, D77)
 	// -----------------------------------------------------------------------
 
 	/**

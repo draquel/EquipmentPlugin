@@ -1,9 +1,9 @@
 # Equipment Sheathing Plan: weapons carried on the body, drawn into the hand
 
-> **Agreed 2026-11-08 as drafted, every decision as recommended (D76-D81, §6).** Being built, S1 first. Owner:
+> **Agreed 2026-11-08 as drafted, every decision as recommended (D77-D82, §6).** Being built, S1 first. Owner:
 > EquipmentPlugin (the slots, the drawn state, the visuals); the fragment's fields in ItemInventoryPlugin, the tags in
 > CommonGameFramework; the character's input, montages, save and HUD in VoxelCharacterPlugin; the content scripts, the
-> replication test and the QA rows in the parent. Terms: `Documentation/GLOSSARY.md`. Numbers: D76-D81 and, for findings,
+> replication test and the QA rows in the parent. Terms: `Documentation/GLOSSARY.md`. Numbers: D77-D82 and, for findings,
 > G159 on (`Documentation/FINDINGS.md`).
 
 ## 1. What exists
@@ -55,7 +55,7 @@ Read 2026-11-08 from the code and the scripts.
 
 ## 3. Design
 
-### 3.1 The model (D76)
+### 3.1 The model (D77)
 
 - **Sheath slots** are equipment slots of their own, `Equipment.Slot.Sheath.*` (CommonGameFramework), whose definition
   names the hand they are drawn into: `FEquipmentSlotDefinition::DrawSlotTag` (set = a sheath; `MainHand` for all of
@@ -88,7 +88,7 @@ Rejected: a wielded flag on the main-hand slot (one carried weapon only, not wha
 sheath into `MainHand` on a draw (no reader changes, but the sheath must stay reserved while its item is out, every equip
 path learns the reservation, and the visual is destroyed and rebuilt on each draw, which fights the hand-off).
 
-### 3.2 The sheaths (D77)
+### 3.2 The sheaths (D78)
 
 | Slot | Bone | Items | Unsheathe / Sheathe clips |
 |---|---|---|---|
@@ -98,7 +98,7 @@ path learns the reservation, and the visual is destroyed and rebuilt on each dra
 
 `HipRight` is left out until an item needs it (a second one-hander). The torch stays an off-hand item.
 
-### 3.3 Drawing and sheathing (D78)
+### 3.3 Drawing and sheathing (D79)
 
 - **Input.** `R` (`IA_Sheathe`, free today): with a weapon drawn, sheathe it; with none, draw the last drawn one (else
   the first occupied sheath). `X` (`IA_CycleWeapon`): sheathe what is drawn and draw the next carried weapon (Belt, Hip,
@@ -120,7 +120,7 @@ path learns the reservation, and the visual is destroyed and rebuilt on each dra
   its own unsheathe or sheathe plays. Death, a downing or a hit react during the unsheathe cancels it (the timer cleared,
   still sheathed).
 
-### 3.4 What follows the held item (D79)
+### 3.4 What follows the held item (D80)
 
 - **The character**: the action set, the primary action chain and the drawn grip read `GetHeldItem(MainHand)`;
   everything sheathed is `Unarmed` (punches, edit mode by hand). The melee and ranged abilities read the held slot for
@@ -130,7 +130,7 @@ path learns the reservation, and the visual is destroyed and rebuilt on each dra
   (no montage). An old save's `MainHand` sword lands in its sheath, drawn (§3.1's rule).
 - **NPCs**: unchanged. Their `HeldItem` stays in the hand; drawing on aggro is a follow-up (§8).
 
-### 3.5 The UI (D80)
+### 3.5 The UI (D81)
 
 - **The equipment panel** lists the sheath slots with no code change ("Left Hip", "Back", "Belt"); the drawn one gets the
   gold "in hand" frame (`UEquipmentSlotWidget::SetDrawn`), and the Main Hand slot shows the held item (dimmed when it is
@@ -138,7 +138,7 @@ path learns the reservation, and the visual is destroyed and rebuilt on each dra
 - **The carried strip**: a code-built `UVCCarriedWeaponsWidget` beside the hotbar, one small icon per occupied sheath,
   the drawn one lit, the R / X hints under it. Display only.
 
-### 3.6 Multiplayer (D81)
+### 3.6 Multiplayer (D82)
 
 `EquipmentSlots` replicate as today with `bDrawn` in the slot. Requests: `ServerRPC_RequestDraw` /
 `ServerRPC_RequestSheathe` (reliable; the predicate again on the server). The owner plays its montage at input and the
@@ -211,12 +211,12 @@ client), `Scripts/qa/editor_gate.py`. By hand: the F2 and F13 rows on `Character
 
 | ID | Question | Recommendation |
 |---|---|---|
-| D76 | The model: sheath slots with a drawn state on the slot, a sheathed flag on the main hand, or sheath slots whose item moves into the main hand on a draw | **Sheath slots with `bDrawn`** (§3.1): one home per item, the visual persists through the hand-off, GAS and the stance layer follow the drawn state; readers ask `GetHeldItem(MainHand)`; an owner with no sheaths behaves as today |
-| D77 | Which sheaths, on which bones, for which items | **Three**: `HipLeft` (the swords, `pelvis`), `Back` (the bow, `spine_05`), `Belt` (the pickaxes, `pelvis` at the right hip); `HipRight` when an item needs it (§3.2) |
-| D78 | How a draw and a sheathe are asked for and animated | **R toggles, X cycles, F on a bag weapon equips and draws it**; no auto-sheathe; `Unsheathe` / `Sheathe` montages per sheath from the packs' clips with a hand-off notify, the visual re-seated at it on every machine, the weapon usable from the hand-off (§3.3) |
-| D79 | What follows the held item; the save; the NPCs | **Everything that reads the main hand reads the held item**; all sheathed = `Unarmed`; GAS of a sheath only while drawn; the save keeps `bDrawn` and maps an old main-hand weapon to its sheath drawn; **NPCs unchanged** (§3.4) |
-| D80 | The UI | **The panel lists the sheaths and frames the drawn one; the Main Hand slot shows the held item; a carried strip beside the hotbar** (display only) (§3.5) |
-| D81 | Multiplayer | **The server flips `bDrawn` at the hand-off (sheathing at once), the owner's montage at input, the multicast to the others (D49)**; `OnRep` re-seats without a rebuild; a step in the replication test (§3.6) |
+| D77 | The model: sheath slots with a drawn state on the slot, a sheathed flag on the main hand, or sheath slots whose item moves into the main hand on a draw | **Sheath slots with `bDrawn`** (§3.1): one home per item, the visual persists through the hand-off, GAS and the stance layer follow the drawn state; readers ask `GetHeldItem(MainHand)`; an owner with no sheaths behaves as today |
+| D78 | Which sheaths, on which bones, for which items | **Three**: `HipLeft` (the swords, `pelvis`), `Back` (the bow, `spine_05`), `Belt` (the pickaxes, `pelvis` at the right hip); `HipRight` when an item needs it (§3.2) |
+| D79 | How a draw and a sheathe are asked for and animated | **R toggles, X cycles, F on a bag weapon equips and draws it**; no auto-sheathe; `Unsheathe` / `Sheathe` montages per sheath from the packs' clips with a hand-off notify, the visual re-seated at it on every machine, the weapon usable from the hand-off (§3.3) |
+| D80 | What follows the held item; the save; the NPCs | **Everything that reads the main hand reads the held item**; all sheathed = `Unarmed`; GAS of a sheath only while drawn; the save keeps `bDrawn` and maps an old main-hand weapon to its sheath drawn; **NPCs unchanged** (§3.4) |
+| D81 | The UI | **The panel lists the sheaths and frames the drawn one; the Main Hand slot shows the held item; a carried strip beside the hotbar** (display only) (§3.5) |
+| D82 | Multiplayer | **The server flips `bDrawn` at the hand-off (sheathing at once), the owner's montage at input, the multicast to the others (D49)**; `OnRep` re-seats without a rebuild; a step in the replication test (§3.6) |
 
 ## 7. Risks
 

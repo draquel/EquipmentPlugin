@@ -176,7 +176,7 @@ EEquipmentResult UEquipmentManagerComponent::TryEquipToSlot(const FItemInstance&
 		return EEquipmentResult::NotAuthorized;
 	}
 
-	// A carried weapon asked into its hand goes into its sheath, drawn (D76).
+	// A carried weapon asked into its hand goes into its sheath, drawn (D77).
 	bool bDraw = false;
 	ResolveSheathTarget(Item, SlotTag, bDraw);
 
@@ -459,7 +459,7 @@ bool UEquipmentManagerComponent::CanEquipItem(const FItemInstance& Item) const
 }
 
 // ===========================================================================
-// Sheaths (the equipment sheathing plan, D76)
+// Sheaths (the equipment sheathing plan, D77)
 // ===========================================================================
 
 EEquipmentResult UEquipmentManagerComponent::TryDraw(FGameplayTag SheathSlotTag, UInventoryComponent* Inventory)
@@ -620,7 +620,7 @@ void UEquipmentManagerComponent::SetDrawnInternal(FEquipmentSlot& Slot, bool bDr
 		return;
 	}
 	Slot.bDrawn = bDrawn;
-	// A sheath grants its item's abilities and effects only while drawn: a belted pickaxe does not dig (D76).
+	// A sheath grants its item's abilities and effects only while drawn: a belted pickaxe does not dig (D77).
 	if (bDrawn)
 	{
 		ApplyGAS(Slot.EquippedItem, Slot.SlotTag);
@@ -791,7 +791,7 @@ FGameplayTag UEquipmentManagerComponent::FindTargetSlot(const FItemInstance& Ite
 		return FGameplayTag();
 	}
 
-	// A carried weapon goes into its sheath where this owner has one (D76); an owner without sheaths equips it as before.
+	// A carried weapon goes into its sheath where this owner has one (D77); an owner without sheaths equips it as before.
 	if (EquipFrag->SheathSlotTag.IsValid())
 	{
 		const FGameplayTag Sheath = FindSlotMatching(EquipFrag->SheathSlotTag);
