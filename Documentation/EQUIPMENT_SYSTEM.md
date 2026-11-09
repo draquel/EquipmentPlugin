@@ -198,7 +198,7 @@ sheath's.
   `EquipmentSlotTag` slot, so an owner without sheaths (the NPCs, another game) equips as before. An equip of a sheathable
   item asked into its sheath's hand (the panel's Main Hand, an old save's main-hand entry) goes into the sheath, drawn
   (`ResolveSheathTarget`, in `TryEquipToSlot` and `ValidateEquipFromInventory`). A sheath's item arrives sheathed.
-- **Draw and sheathe.** `TryDraw(SheathSlotTag, Inventory)` and `TrySheathe(HandOrSheathTag)`, each a request from a
+- **Draw and sheathe.** `TryDraw(SheathSlotTag, Inventory)` and `TrySheathe(SlotTag)` (the hand, or the sheath itself), each a request from a
   client (`ServerRPC_RequestDraw`, `ServerRPC_RequestSheathe`) with one predicate on both sides, `ValidateDraw`
   (D-CR16): `IncompatibleSlot` (no sheath, no such hand), `InvalidItem` (an empty sheath), `SlotOccupied` (the hand slot
   itself holds an item and no inventory was given), `NoInventorySpace`. **One item per hand**: a draw sends the sheath
