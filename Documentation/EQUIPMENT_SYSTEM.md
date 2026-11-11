@@ -1,6 +1,6 @@
 # Equipment System
 
-> State as of 2026-11-08 (sheaths, the equipment sheathing plan S1; before it code review CR5, 2026-11-02).
+> State as of 2026-11-11 (blocked hands, G175; sheaths, the equipment sheathing plan S1, 2026-11-08; before it code review CR5, 2026-11-02).
 
 ## Overview
 
@@ -220,6 +220,18 @@ sheath's.
   draw or a sheathe of the same item, re-seats the visual, links or unlinks the layer and fires `OnDrawnChanged(SlotTag,
   bDrawn)` (every machine; the authority from `SetDrawnInternal`), then `OnEquipmentChanged` as always.
 - Console: `Equipment.Draw <SheathSlotTag>`, `Equipment.Sheathe [SlotTag]` (no animation). Tests `Equipment.Sheath.*`.
+
+**Blocked hands (G175, 2026-11-11).** An item can empty other hands while it is in its own: its Equipment fragment's
+`BlockedSlotTags` (the bow and the pickaxes name `Equipment.Slot.OffHand`: no shield beside them). `GetBlockedSlotTags()`
+gathers them from every item in a hand, `IsSlotBlocked(Slot)` asks for one. A blocked hand takes nothing: a draw into it
+and an equip into a blocked hand slot itself are refused with `HandBlocked` (the predicates `ValidateDraw` and
+`ValidateEquip`, on both sides), and a draw of a blocking item sends what the blocked hand slot itself holds (a torch) to
+the bag with the hand's own item. After every equip, unequip, draw and sheathe the authority reconciles the hands
+(`ReconcileBlockedHands`): a sheath drawn into a blocked hand is sheathed, and a sheath whose definition sets
+`bDrawWhenFree` (the character's `Equipment.Slot.Sheath.ShieldBack`, drawn into the off hand) is drawn as soon as its hand
+is free and not blocked. So the shield is on the arm whenever it can be and on the back while the bow or a pickaxe is
+out, with no request of its own; its abilities and effects (its Defense) follow the hand as any sheath's. The swap is
+instant: there is no montage for the shield. Test `Equipment.Sheath.BlockedHand`.
 
 ---
 
