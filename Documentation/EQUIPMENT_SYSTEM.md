@@ -221,17 +221,35 @@ sheath's.
   bDrawn)` (every machine; the authority from `SetDrawnInternal`), then `OnEquipmentChanged` as always.
 - Console: `Equipment.Draw <SheathSlotTag>`, `Equipment.Sheathe [SlotTag]` (no animation). Tests `Equipment.Sheath.*`.
 
-**Blocked hands (G175, 2026-11-11).** An item can empty other hands while it is in its own: its Equipment fragment's
-`BlockedSlotTags` (the bow and the pickaxes name `Equipment.Slot.OffHand`: no shield beside them). `GetBlockedSlotTags()`
+**One item per place on the body (the sheath loadout plan, D95, 2026-11-11).** A sheath is one place on the body and,
+like every slot, holds one item: you can only equip what can be sheathed together. The character's back
+(`Equipment.Slot.Sheath.Back`) holds one of a bow, a two-handed weapon or a shield. The rule is the slot's occupancy,
+checked by the predicates both sides run (`ValidateEquipFromInventory` → `ValidateEquip`, D-CR16): an equip from the bag
+into an occupied sheath is a swap (the old item takes the new one's bag slot, so a full bag still swaps: the bow equipped
+sends the shield to the bag), and a direct equip with no inventory is refused (`SlotOccupied`, nothing dropped). **A
+sheath draws into its item's hand**: the item's `EquipmentSlotTag` when the owner has that hand as an ordinary slot, else
+the sheath definition's `DrawSlotTag` (`GetDrawHandFor`); the authority sets the slot's `DrawSlotTag` on the equip (the
+back holding a shield draws into the off hand) and puts the definition's back when it empties, and it replicates with the
+slot, so every reader of the drawn hand (`GetHeldItem`, the visual's bone and fit, the character's cycle) follows the
+item. A shield asked into the off hand (the panel, an old save) goes onto the back (`ResolveSheathTarget`).
+
+**The shield beside a one-handed weapon (D96).** An item whose fragment names `DrawWithSlotTag` follows that hand
+(`GetDrawLeadSlotTag`: the shield follows `Equipment.Slot.MainHand`): after every equip, unequip, draw and sheathe the
+authority reconciles the hands (`ReconcileHands`), and the shield is in its hand while the lead's hand holds an item that
+does not block its hand (a sword, not a pickaxe) and nothing else is in its hand (no torch), on its sheath otherwise. So
+the shield comes onto the arm when the sword is drawn and onto the back when it is sheathed or leaves; unarmed, it is on
+the back. Its state is its lead's: a draw of it is refused by `ValidateDraw` (`IncompatibleSlot`) and a sheathe by
+`TrySheathe` (`Failed`), on both sides; an equip asking for its draw leaves that to the reconcile. Its abilities and
+effects (its Defense) follow the hand as any sheath's. The swap is instant, at the sword's draw or sheathe: there is no
+montage for the shield. Being equipped is not coupled: a shield stays on the back when the sword goes to the bag.
+
+**Blocked hands (G175).** An item can empty other hands while it is in its own: its Equipment fragment's
+`BlockedSlotTags` (the bow and the pickaxes name `Equipment.Slot.OffHand`: they need both hands). `GetBlockedSlotTags()`
 gathers them from every item in a hand, `IsSlotBlocked(Slot)` asks for one. A blocked hand takes nothing: a draw into it
 and an equip into a blocked hand slot itself are refused with `HandBlocked` (the predicates `ValidateDraw` and
-`ValidateEquip`, on both sides), and a draw of a blocking item sends what the blocked hand slot itself holds (a torch) to
-the bag with the hand's own item. After every equip, unequip, draw and sheathe the authority reconciles the hands
-(`ReconcileBlockedHands`): a sheath drawn into a blocked hand is sheathed, and a sheath whose definition sets
-`bDrawWhenFree` (the character's `Equipment.Slot.Sheath.ShieldBack`, drawn into the off hand) is drawn as soon as its hand
-is free and not blocked. So the shield is on the arm whenever it can be and on the back while the bow or a pickaxe is
-out, with no request of its own; its abilities and effects (its Defense) follow the hand as any sheath's. The swap is
-instant: there is no montage for the shield. Test `Equipment.Sheath.BlockedHand`.
+`ValidateEquip`, on both sides), a draw of a blocking item sends what the blocked hand slot itself holds (a torch) to
+the bag with the hand's own item, and the reconcile sheathes what is drawn into a blocked hand (the shield, when the
+pickaxe comes out). Tests `Equipment.Sheath.OnePerPlace`, `Equipment.Sheath.DrawsWithLead`.
 
 ---
 
@@ -403,7 +421,10 @@ id, simulated server/client with `CGFTesting::FRPCCall`; another player's invent
 the sheath drawn), `Sheath.DrawAndSheathe` (the results, one item per hand, the hand slot's item to the bag),
 `Sheath.GASWhileDrawn`, `Sheath.AttachByState` (the bones and fits sheathed and drawn, the item's own bones),
 `Sheath.FromInventoryDraw` (equip and draw in one request, the old weapon kept in its sheath), `Sheath.ClientRequests`
-(the client's predicate and requests, `OnRep_EquipmentSlots` acting on a draw and a sheathe), `Sheath.SlotWidgetColour`,
+(the client's predicate and requests, `OnRep_EquipmentSlots` acting on a draw and a sheathe), `Sheath.OnePerPlace` (the
+back holds a bow or a shield: a direct equip refused, a swap from a full bag, the draw hand by the item, the client's
+swap request), `Sheath.DrawsWithLead` (the shield drawn and sheathed with the sword, on the back unarmed, beside a pickaxe
+and behind a torch, its own draw and sheathe refused on both sides, its GAS with the hand), `Sheath.SlotWidgetColour`,
 `Durability.EmptySlotHasNone`, `Durability.LossMarksTheItem` (the worn item is no longer `Identical` to its state
 before, G136), `LightSource.IntensityRule` / `NothingCarried`, and
 `GAS.ResolvesAbilitySystemThroughInterface` in the GAS module. VoxelCharacterPlugin's `VoxelCharacter.EquipmentLoop.*` tests cover

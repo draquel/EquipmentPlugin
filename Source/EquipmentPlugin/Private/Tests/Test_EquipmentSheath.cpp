@@ -14,7 +14,8 @@
 
 // ---------------------------------------------------------------------------
 // Sheaths (the equipment sheathing plan, D77): a carried weapon lands in its sheath, is drawn into its hand and put
-// back, one item per hand, its GAS only while drawn, its visual's bone and fit by the state, the client's requests. As
+// back, one item per hand, its GAS only while drawn, its visual's bone and fit by the state, the client's requests; one
+// item per place on the body and the shield beside a one-handed weapon (the sheath loadout plan, D95, D96). As
 // the other equipment tests: a standalone game instance holds the definitions, the slots are built directly (play has
 // not begun), a client is an AutonomousProxy actor whose RPCs reach the server's component through CGFTesting::FRPCCall.
 // ---------------------------------------------------------------------------
@@ -24,6 +25,13 @@ namespace EquipmentSheathTestHelpers
 	FGameplayTag Head() { return CGFGameplayTags::Equipment_Slot_Head; }
 	FGameplayTag HipLeft() { return CGFGameplayTags::Equipment_Slot_Sheath_HipLeft; }
 	FGameplayTag Back() { return CGFGameplayTags::Equipment_Slot_Sheath_Back; }
+	FGameplayTag OffHand() { return CGFGameplayTags::Equipment_Slot_OffHand; }
+
+	/** A shield's fragment: it follows the main hand (D96). */
+	void MakeShield(UItemFragment_Equipment& Fragment)
+	{
+		Fragment.DrawWithSlotTag = MainHand();
+	}
 
 	/** A registered definition used in Slot, carried in Sheath when it is set; Configure fills the rest of the fragment. */
 	FPrimaryAssetId RegisterDefinition(UItemDatabaseSubsystem* Database, const TCHAR* Name, FGameplayTag Slot, FGameplayTag Sheath,
@@ -54,13 +62,19 @@ namespace EquipmentSheathTestHelpers
 		}
 	}
 
+	/** A slot as BeginPlay would build it from its definition, which the owner keeps (a sheath's own hand). */
 	void AddSlot(UEquipmentManagerComponent* Comp, FGameplayTag Tag, FGameplayTag DrawInto = FGameplayTag(), FName Socket = NAME_None,
-		const FTransform& Correction = FTransform::Identity, bool bDrawWhenFree = false)
+		const FTransform& Correction = FTransform::Identity)
 	{
+		FEquipmentSlotDefinition Def;
+		Def.SlotTag = Tag;
+		Def.DrawSlotTag = DrawInto;
+		Def.AttachSocket = Socket;
+		Def.AttachOffset = Correction;
+		Comp->AvailableSlots.Add(Def);
 		FEquipmentSlot Slot;
 		Slot.SlotTag = Tag;
 		Slot.DrawSlotTag = DrawInto;
-		Slot.bDrawWhenFree = bDrawWhenFree;
 		Slot.AttachSocket = Socket;
 		Slot.AttachOffset = Correction;
 		Comp->EquipmentSlots.Add(Slot);
@@ -122,6 +136,13 @@ namespace EquipmentSheathTestHelpers
 	bool SameItem(const FItemInstance& A, const FItemInstance& B)
 	{
 		return A.IsValid() && A.InstanceId == B.InstanceId;
+	}
+
+	/** The hand a slot draws into now (its replicated DrawSlotTag). */
+	FGameplayTag DrawHandOf(const UEquipmentManagerComponent* Comp, FGameplayTag SlotTag)
+	{
+		const FEquipmentSlot* Slot = Comp->EquipmentSlots.FindByPredicate([&SlotTag](const FEquipmentSlot& S) { return S.SlotTag == SlotTag; });
+		return Slot ? Slot->DrawSlotTag : FGameplayTag();
 	}
 }
 
@@ -538,14 +559,14 @@ bool FEquipmentSheathSlotColourTest::RunTest(const FString& Parameters)
 }
 
 // ===========================================================================
-// A blocked hand (G175): a bow or a two-hander empties the off hand
+// One item per place on the body (the sheath loadout plan, D95): the back holds a bow or a shield
 // ===========================================================================
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEquipmentSheathBlockedHandTest,
-	"Equipment.Sheath.BlockedHand",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEquipmentSheathOnePerPlaceTest,
+	"Equipment.Sheath.OnePerPlace",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
-bool FEquipmentSheathBlockedHandTest::RunTest(const FString& Parameters)
+bool FEquipmentSheathOnePerPlaceTest::RunTest(const FString& Parameters)
 {
 	using namespace EquipmentSheathTestHelpers;
 	CGFTesting::FTestGameInstance Game;
@@ -554,62 +575,180 @@ bool FEquipmentSheathBlockedHandTest::RunTest(const FString& Parameters)
 	{
 		return true;
 	}
-	const FGameplayTag OffHand = CGFGameplayTags::Equipment_Slot_OffHand;
-	const FGameplayTag ShieldBack = CGFGameplayTags::Equipment_Slot_Sheath_ShieldBack;
-	const FPrimaryAssetId Sword = RegisterDefinition(Database, TEXT("BlockedHandSword"), MainHand(), HipLeft());
-	const FPrimaryAssetId Bow = RegisterDefinition(Database, TEXT("BlockedHandBow"), MainHand(), Back(),
-		[&OffHand](UItemFragment_Equipment& Fragment) { Fragment.BlockedSlotTags.AddTag(OffHand); });
-	const FPrimaryAssetId Shield = RegisterDefinition(Database, TEXT("BlockedHandShield"), OffHand, ShieldBack);
-	const FPrimaryAssetId Torch = RegisterDefinition(Database, TEXT("BlockedHandTorch"), OffHand, FGameplayTag());
+	const FPrimaryAssetId Bow = RegisterDefinition(Database, TEXT("OnePerPlaceBow"), MainHand(), Back(),
+		[](UItemFragment_Equipment& Fragment) { Fragment.BlockedSlotTags.AddTag(OffHand()); });
+	const FPrimaryAssetId Shield = RegisterDefinition(Database, TEXT("OnePerPlaceShield"), OffHand(), Back(), MakeShield);
 
 	AActor* Owner = Game.SpawnOwner();
 	UEquipmentManagerComponent* Carrier = MakeCarrier(Owner);
-	AddSlot(Carrier, OffHand, FGameplayTag(), TEXT("hand_l"));
-	AddSlot(Carrier, ShieldBack, OffHand, TEXT("spine_03"), FTransform::Identity, /*bDrawWhenFree*/ true);
-	UInventoryComponent* Bag = MakeInventory(Owner, 4);
+	AddSlot(Carrier, OffHand(), FGameplayTag(), TEXT("hand_l"));
 
-	// The shield lands in its back sheath and comes onto the arm on its own: the off hand is free.
+	// The shield goes onto the back and draws into the off hand; with no weapon in the main hand it stays on the back.
 	const FItemInstance ShieldItem = Database->CreateItemInstance(Shield, 1);
 	TestEqual(TEXT("The shield equips"), Result(Carrier->TryEquip(ShieldItem)), Result(EEquipmentResult::Success));
-	TestTrue(TEXT("The shield is in its back sheath"), SameItem(Carrier->GetEquippedItem(ShieldBack), ShieldItem));
-	TestTrue(TEXT("The shield is drawn on its own"), Carrier->IsDrawn(ShieldBack));
-	TestTrue(TEXT("The off hand holds the shield"), SameItem(Carrier->GetHeldItem(OffHand), ShieldItem));
+	TestTrue(TEXT("The shield is on the back"), SameItem(Carrier->GetEquippedItem(Back()), ShieldItem));
+	TestTrue(TEXT("The back draws the shield into the off hand"), DrawHandOf(Carrier, Back()) == OffHand());
+	TestFalse(TEXT("With nothing in the main hand the shield stays on the back"), Carrier->IsDrawn(Back()));
 
-	// A sword in the main hand blocks nothing: the shield stays on the arm.
-	TestEqual(TEXT("The sword equips"), Result(Carrier->TryEquip(Database->CreateItemInstance(Sword, 1))), Result(EEquipmentResult::Success));
-	TestEqual(TEXT("The sword draws"), Result(Carrier->TryDraw(HipLeft(), nullptr)), Result(EEquipmentResult::Success));
-	TestTrue(TEXT("With the sword the shield stays drawn"), Carrier->IsDrawn(ShieldBack));
-	TestFalse(TEXT("With the sword the off hand is not blocked"), Carrier->IsSlotBlocked(OffHand));
+	// The back holds one item: with no bag to take the shield, the bow is refused and nothing is dropped.
+	const FItemInstance BowItem = Database->CreateItemInstance(Bow, 1);
+	TestEqual(TEXT("The bow beside the shield is refused"), Result(Carrier->TryEquip(BowItem)), Result(EEquipmentResult::SlotOccupied));
+	TestTrue(TEXT("The shield stays on the back"), SameItem(Carrier->GetEquippedItem(Back()), ShieldItem));
 
-	// The bow drawn: the sword goes back to the hip and the shield onto the back.
-	TestEqual(TEXT("The bow equips"), Result(Carrier->TryEquip(Database->CreateItemInstance(Bow, 1))), Result(EEquipmentResult::Success));
-	TestEqual(TEXT("The bow draws"), Result(Carrier->TryDraw(Back(), nullptr)), Result(EEquipmentResult::Success));
-	TestTrue(TEXT("The bow blocks the off hand"), Carrier->IsSlotBlocked(OffHand));
-	TestFalse(TEXT("With the bow the sword is sheathed"), Carrier->IsDrawn(HipLeft()));
-	TestFalse(TEXT("With the bow the shield is on the back"), Carrier->IsDrawn(ShieldBack));
-	TestFalse(TEXT("With the bow the off hand holds nothing"), Carrier->GetHeldItem(OffHand).IsValid());
-	TestEqual(TEXT("The shield cannot be drawn beside the bow"), Result(Carrier->TryDraw(ShieldBack, Bag)), Result(EEquipmentResult::HandBlocked));
-	TestEqual(TEXT("A torch cannot go into the off hand beside the bow"),
-		Result(Carrier->TryEquipToSlot(Database->CreateItemInstance(Torch, 1), OffHand)), Result(EEquipmentResult::HandBlocked));
+	// From a bag the equip swaps, even a full one: the shield takes the bow's bag slot.
+	UInventoryComponent* Bag = MakeInventory(Owner, 1);
+	PlaceItemInSlot(Bag, BowItem, 0);
+	TestEqual(TEXT("The bow equips from the full bag"), Result(Carrier->TryEquipFromInventory(BowItem.InstanceId, Bag, FGameplayTag())),
+		Result(EEquipmentResult::Success));
+	TestTrue(TEXT("The bow is on the back"), SameItem(Carrier->GetEquippedItem(Back()), BowItem));
+	TestTrue(TEXT("The back draws the bow into the main hand"), DrawHandOf(Carrier, Back()) == MainHand());
+	TestTrue(TEXT("The shield is in the bag"), SameItem(Bag->GetItemInSlot(0), ShieldItem));
 
-	// The bow put away: the shield comes back onto the arm.
-	TestEqual(TEXT("The bow sheathes"), Result(Carrier->TrySheathe(MainHand())), Result(EEquipmentResult::Success));
-	TestTrue(TEXT("Without the bow the shield is drawn again"), Carrier->IsDrawn(ShieldBack));
+	// A shield asked into the off hand (the panel, an old save) goes onto the back the same way, the bow to the bag.
+	TestEqual(TEXT("The shield equips from the bag into the off hand"), Result(Carrier->TryEquipFromInventory(ShieldItem.InstanceId, Bag, OffHand(), true)),
+		Result(EEquipmentResult::Success));
+	TestTrue(TEXT("The shield is on the back again"), SameItem(Carrier->GetEquippedItem(Back()), ShieldItem));
+	TestFalse(TEXT("The off hand slot itself stays empty"), Carrier->IsSlotOccupied(OffHand()));
+	TestFalse(TEXT("The asked draw waits for a weapon in the main hand"), Carrier->IsDrawn(Back()));
+	TestTrue(TEXT("The bow is in the bag"), SameItem(Bag->GetItemInSlot(0), BowItem));
 
-	// A torch in the off hand slot itself sends the shield to the back; the bow's draw sends the torch to the bag, and the
-	// shield stays on the back until the bow goes away.
+	// Emptied, the back draws into its own hand again.
+	FItemInstance Out;
+	TestEqual(TEXT("The shield unequips"), Result(Carrier->TryUnequip(Back(), Out)), Result(EEquipmentResult::Success));
+	TestTrue(TEXT("The empty back draws into the main hand"), DrawHandOf(Carrier, Back()) == MainHand());
+
+	// The client predicts through the same predicate: the swap is sent, the server makes it.
+	AActor* ServerPlayer = Game.SpawnOwner();
+	UEquipmentManagerComponent* ServerEquipment = MakeCarrier(ServerPlayer);
+	AddSlot(ServerEquipment, OffHand(), FGameplayTag(), TEXT("hand_l"));
+	UInventoryComponent* ServerBag = MakeInventory(ServerPlayer, 1);
+	AActor* ClientPlayer = Game.SpawnRemoteOwner();
+	UEquipmentManagerComponent* ClientEquipment = MakeCarrier(ClientPlayer);
+	AddSlot(ClientEquipment, OffHand(), FGameplayTag(), TEXT("hand_l"));
+	UInventoryComponent* ClientBag = MakeInventory(ClientPlayer, 1);
+
+	const FItemInstance ServerShield = Database->CreateItemInstance(Shield, 1);
+	const FItemInstance ServerBow = Database->CreateItemInstance(Bow, 1);
+	ServerEquipment->TryEquip(ServerShield);
+	PlaceItemInSlot(ServerBag, ServerBow, 0);
+	PlaceEquipped(ClientEquipment, ServerShield, Back())->DrawSlotTag = OffHand(); // replicated
+	PlaceItemInSlot(ClientBag, ServerBow, 0);
+
+	TestEqual(TEXT("The client's equip of the bow is Success (optimistic: a swap)"),
+		Result(ClientEquipment->TryEquipFromInventory(ServerBow.InstanceId, ClientBag, FGameplayTag())), Result(EEquipmentResult::Success));
+	TestTrue(TEXT("The client's copy waits for replication"), SameItem(ClientEquipment->GetEquippedItem(Back()), ServerShield));
+	CGFTesting::FRPCCall(ServerEquipment, TEXT("ServerRPC_RequestEquipFromInventory"))
+		.Set(TEXT("ItemInstanceId"), ServerBow.InstanceId).Set(TEXT("SourceInventory"), ServerBag).Send();
+	TestTrue(TEXT("On the server the bow is on the back"), SameItem(ServerEquipment->GetEquippedItem(Back()), ServerBow));
+	TestTrue(TEXT("On the server the shield is in the bag"), SameItem(ServerBag->GetItemInSlot(0), ServerShield));
+
+	Release(Database, { Bow, Shield });
+	return true;
+}
+
+// ===========================================================================
+// The shield follows the one-handed weapon (D96): drawn with it, sheathed with it
+// ===========================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEquipmentSheathDrawsWithLeadTest,
+	"Equipment.Sheath.DrawsWithLead",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEquipmentSheathDrawsWithLeadTest::RunTest(const FString& Parameters)
+{
+	using namespace EquipmentSheathTestHelpers;
+	CGFTesting::FTestGameInstance Game;
+	UItemDatabaseSubsystem* Database = Game.GetSubsystem<UItemDatabaseSubsystem>();
+	if (!TestNotNull(TEXT("The item database"), Database))
+	{
+		return true;
+	}
+	const FGameplayTag Belt = CGFGameplayTags::Equipment_Slot_Sheath_Belt;
+	const FPrimaryAssetId Sword = RegisterDefinition(Database, TEXT("DrawsWithLeadSword"), MainHand(), HipLeft());
+	const FPrimaryAssetId Pickaxe = RegisterDefinition(Database, TEXT("DrawsWithLeadPickaxe"), MainHand(), Belt,
+		[](UItemFragment_Equipment& Fragment) { Fragment.BlockedSlotTags.AddTag(OffHand()); });
+	const FPrimaryAssetId Shield = RegisterDefinition(Database, TEXT("DrawsWithLeadShield"), OffHand(), Back(), MakeShield);
+	const FPrimaryAssetId Torch = RegisterDefinition(Database, TEXT("DrawsWithLeadTorch"), OffHand(), FGameplayTag());
+
+	AActor* Owner = Game.SpawnOwner();
+	UEquipmentManagerComponent* Carrier = MakeCarrier(Owner);
+	AddSlot(Carrier, OffHand(), FGameplayTag(), TEXT("hand_l"));
+	AddSlot(Carrier, Belt, MainHand(), TEXT("pelvis"));
+	UInventoryComponent* Bag = MakeInventory(Owner, 4);
+	// The GAS module's callbacks, counted per slot: the shield's Defense follows the hand.
+	TMap<FGameplayTag, int32> Granted;
+	Carrier->OnGASEquipCallback = [&Granted](const FItemInstance&, FGameplayTag SlotTag) { ++Granted.FindOrAdd(SlotTag); };
+	Carrier->OnGASUnequipCallback = [&Granted](FGameplayTag SlotTag) { --Granted.FindOrAdd(SlotTag); };
+
+	const FItemInstance ShieldItem = Database->CreateItemInstance(Shield, 1);
+	Carrier->TryEquip(Database->CreateItemInstance(Sword, 1));
+	Carrier->TryEquip(Database->CreateItemInstance(Pickaxe, 1));
+	Carrier->TryEquip(ShieldItem);
+	TestTrue(TEXT("The shield follows the main hand"), Carrier->GetDrawLeadSlotTag(Back()) == MainHand());
+	TestFalse(TEXT("The sword follows nothing"), Carrier->GetDrawLeadSlotTag(HipLeft()).IsValid());
+	TestFalse(TEXT("Unarmed, the shield is on the back"), Carrier->IsDrawn(Back()));
+	TestEqual(TEXT("On the back it grants nothing"), Granted.FindRef(Back()), 0);
+
+	// Its state is its lead's: neither drawn nor sheathed on its own, at home or on the server.
+	TestEqual(TEXT("The shield is not drawn on its own"), Result(Carrier->TryDraw(Back(), Bag)), Result(EEquipmentResult::IncompatibleSlot));
+	TestFalse(TEXT("The refused draw changed nothing"), Carrier->IsDrawn(Back()));
+
+	// The sword drawn: the shield comes onto the arm; sheathed, both go back.
+	TestEqual(TEXT("The sword draws"), Result(Carrier->TryDraw(HipLeft(), Bag)), Result(EEquipmentResult::Success));
+	TestTrue(TEXT("With the sword the shield is drawn"), Carrier->IsDrawn(Back()));
+	TestTrue(TEXT("The off hand holds the shield"), SameItem(Carrier->GetHeldItem(OffHand()), ShieldItem));
+	TestEqual(TEXT("In the hand it grants its Defense"), Granted.FindRef(Back()), 1);
+	TestEqual(TEXT("The shield is not sheathed on its own"), Result(Carrier->TrySheathe(OffHand())), Result(EEquipmentResult::Failed));
+	TestTrue(TEXT("The refused sheathe changed nothing"), Carrier->IsDrawn(Back()));
+	TestEqual(TEXT("The sword sheathes"), Result(Carrier->TrySheathe(MainHand())), Result(EEquipmentResult::Success));
+	TestFalse(TEXT("With the sword the shield goes onto the back"), Carrier->IsDrawn(Back()));
+	TestEqual(TEXT("Back on the back its Defense is revoked"), Granted.FindRef(Back()), 0);
+
+	// A two-handed tool needs the off hand: the shield stays on the back while the pickaxe is out.
+	Carrier->TryDraw(HipLeft(), Bag);
+	TestEqual(TEXT("The pickaxe draws"), Result(Carrier->TryDraw(Belt, Bag)), Result(EEquipmentResult::Success));
+	TestFalse(TEXT("The pickaxe sent the sword to the hip"), Carrier->IsDrawn(HipLeft()));
+	TestFalse(TEXT("With the pickaxe the shield is on the back"), Carrier->IsDrawn(Back()));
+	TestTrue(TEXT("The pickaxe blocks the off hand"), Carrier->IsSlotBlocked(OffHand()));
+	TestEqual(TEXT("A torch cannot go into the off hand beside the pickaxe"),
+		Result(Carrier->TryEquipToSlot(Database->CreateItemInstance(Torch, 1), OffHand())), Result(EEquipmentResult::HandBlocked));
+	TestEqual(TEXT("Back to the sword"), Result(Carrier->TryDraw(HipLeft(), Bag)), Result(EEquipmentResult::Success));
+	TestTrue(TEXT("With the sword again the shield is drawn"), Carrier->IsDrawn(Back()));
+
+	// A torch in the off hand slot itself wins over the shield; the shield comes back when the torch goes.
 	const FItemInstance TorchItem = Database->CreateItemInstance(Torch, 1);
-	TestEqual(TEXT("The torch equips into the off hand"), Result(Carrier->TryEquipToSlot(TorchItem, OffHand)), Result(EEquipmentResult::Success));
-	TestFalse(TEXT("With the torch in the off hand the shield is on the back"), Carrier->IsDrawn(ShieldBack));
-	TestEqual(TEXT("Without a bag the bow cannot clear the torch"), Result(Carrier->TryDraw(Back(), nullptr)), Result(EEquipmentResult::SlotOccupied));
-	TestEqual(TEXT("With a bag the bow draws"), Result(Carrier->TryDraw(Back(), Bag)), Result(EEquipmentResult::Success));
-	TestFalse(TEXT("The torch left the off hand"), Carrier->IsSlotOccupied(OffHand));
-	TestTrue(TEXT("The torch is in the bag"), Bag->FindSlotIndexByInstanceId(TorchItem.InstanceId) != INDEX_NONE);
-	TestFalse(TEXT("The shield stays on the back beside the bow"), Carrier->IsDrawn(ShieldBack));
-	TestEqual(TEXT("The bow sheathes again"), Result(Carrier->TrySheathe(MainHand())), Result(EEquipmentResult::Success));
-	TestTrue(TEXT("The shield comes back onto the arm"), Carrier->IsDrawn(ShieldBack));
+	TestEqual(TEXT("The torch equips into the off hand"), Result(Carrier->TryEquipToSlot(TorchItem, OffHand())), Result(EEquipmentResult::Success));
+	TestFalse(TEXT("With the torch the shield is on the back"), Carrier->IsDrawn(Back()));
+	TestTrue(TEXT("The off hand holds the torch"), SameItem(Carrier->GetHeldItem(OffHand()), TorchItem));
+	TestEqual(TEXT("The torch goes to the bag"), Result(Carrier->TryUnequipToInventory(OffHand(), Bag)), Result(EEquipmentResult::Success));
+	TestTrue(TEXT("Without the torch the shield is drawn again"), Carrier->IsDrawn(Back()));
 
-	Release(Database, { Sword, Bow, Shield, Torch });
+	// The sword leaving the hand (unequipped while drawn) takes the shield off the arm; the shield stays on the back.
+	FItemInstance Out;
+	TestEqual(TEXT("The drawn sword unequips"), Result(Carrier->TryUnequip(HipLeft(), Out)), Result(EEquipmentResult::Success));
+	TestFalse(TEXT("Without the sword the shield is on the back"), Carrier->IsDrawn(Back()));
+	TestTrue(TEXT("The shield is still equipped"), SameItem(Carrier->GetEquippedItem(Back()), ShieldItem));
+	TestEqual(TEXT("Its Defense went with the hand"), Granted.FindRef(Back()), 0);
+
+	// An equip of the shield while the sword is drawn puts it on the arm at once.
+	Carrier->TryUnequip(Back(), Out);
+	Carrier->TryEquip(Database->CreateItemInstance(Sword, 1));
+	Carrier->TryDraw(HipLeft(), Bag);
+	Carrier->TryEquip(ShieldItem);
+	TestTrue(TEXT("A shield equipped beside the drawn sword is drawn"), Carrier->IsDrawn(Back()));
+
+	// The client's predicate refuses the shield's own draw and sheathe too (no request is sent).
+	AActor* ClientPlayer = Game.SpawnRemoteOwner();
+	UEquipmentManagerComponent* ClientEquipment = MakeCarrier(ClientPlayer);
+	AddSlot(ClientEquipment, OffHand(), FGameplayTag(), TEXT("hand_l"));
+	PlaceEquipped(ClientEquipment, ShieldItem, Back())->DrawSlotTag = OffHand(); // replicated
+	TestEqual(TEXT("The client's draw of the shield is refused at home"), Result(ClientEquipment->TryDraw(Back())), Result(EEquipmentResult::IncompatibleSlot));
+	PlaceEquipped(ClientEquipment, ShieldItem, Back(), true);
+	TestEqual(TEXT("The client's sheathe of the shield is refused at home"), Result(ClientEquipment->TrySheathe(OffHand())), Result(EEquipmentResult::Failed));
+
+	Carrier->OnGASEquipCallback = nullptr;
+	Carrier->OnGASUnequipCallback = nullptr;
+	Release(Database, { Sword, Pickaxe, Shield, Torch });
 	return true;
 }
 
