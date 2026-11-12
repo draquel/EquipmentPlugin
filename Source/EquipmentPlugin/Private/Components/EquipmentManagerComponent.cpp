@@ -186,8 +186,9 @@ EEquipmentResult UEquipmentManagerComponent::TryEquipToSlot(const FItemInstance&
 		return ValidationResult;
 	}
 
-	// No inventory to hand a replaced item to: refuse rather than drop it (G90).
-	if (IsSlotOccupied(SlotTag))
+	// No inventory to hand a replaced item to: refuse rather than drop it (G90). The same for an item it would send off
+	// the place it shares (a quiver beside a shield, D97).
+	if (IsSlotOccupied(SlotTag) || !GetPlaceConflicts(Item, SlotTag).IsEmpty())
 	{
 		return EEquipmentResult::SlotOccupied;
 	}
@@ -342,6 +343,17 @@ EEquipmentResult UEquipmentManagerComponent::EquipFromInventory(const FGuid& Ite
 	if (ValidationResult != EEquipmentResult::Success)
 	{
 		return ValidationResult;
+	}
+
+	// What shares no place with it goes to the bag first (a shield off the back for the quiver, D97); each step is
+	// validated before it moves anything, so a refusal leaves the item where it was.
+	for (const FGameplayTag& Conflict : GetPlaceConflicts(Item, SlotTag))
+	{
+		const EEquipmentResult Evicted = UnequipToInventory(Conflict, SourceInventory);
+		if (Evicted != EEquipmentResult::Success)
+		{
+			return Evicted;
+		}
 	}
 
 	const FEquipmentSlot* Slot = FindSlot(SlotTag);
@@ -573,6 +585,36 @@ FGameplayTagContainer UEquipmentManagerComponent::GetBlockedSlotTags() const
 bool UEquipmentManagerComponent::IsSlotBlocked(FGameplayTag SlotTag) const
 {
 	return SlotTag.IsValid() && GetBlockedSlotTags().HasTagExact(SlotTag);
+}
+
+TArray<FGameplayTag> UEquipmentManagerComponent::GetPlaceConflicts(const FItemInstance& Item, FGameplayTag SlotTag) const
+{
+	TArray<FGameplayTag> Conflicts;
+	for (const FEquipmentSlot& Slot : EquipmentSlots)
+	{
+		if (Slot.bIsOccupied && Slot.SlotTag != SlotTag && ItemsShareNoPlace(Item, SlotTag, Slot.EquippedItem, Slot.SlotTag))
+		{
+			Conflicts.Add(Slot.SlotTag);
+		}
+	}
+	return Conflicts;
+}
+
+bool UEquipmentManagerComponent::ItemsShareNoPlace(const FItemInstance& A, FGameplayTag SlotA, const FItemInstance& B, FGameplayTag SlotB) const
+{
+	UItemDatabaseSubsystem* DB = GetItemDatabase();
+	// The item in OwnSlot shares OtherSlot's place, and Other is none of the items it allows there.
+	auto Refuses = [this, DB](const FItemInstance& Own, const FItemInstance& Other, FGameplayTag OtherSlot)
+	{
+		const UItemFragment_Equipment* EquipFrag = GetEquipmentFragment(Own);
+		if (!EquipFrag || !EquipFrag->SharesPlaceWithSlotTag.IsValid() || EquipFrag->SharesPlaceWithSlotTag != OtherSlot)
+		{
+			return false;
+		}
+		const UItemDefinition* OtherDef = DB ? DB->GetDefinition(Other.ItemDefinitionId) : nullptr;
+		return !OtherDef || !OtherDef->ItemTags.HasAny(EquipFrag->SharesPlaceWithItemTags);
+	};
+	return Refuses(A, B, SlotB) || Refuses(B, A, SlotA);
 }
 
 EEquipmentResult UEquipmentManagerComponent::ValidateDraw(FGameplayTag SheathSlotTag, const UInventoryComponent* Inventory) const
@@ -1063,7 +1105,20 @@ EEquipmentResult UEquipmentManagerComponent::ValidateEquipFromInventory(const FG
 		ResolveSheathTarget(OutItem, InOutSlotTag, bInOutDraw);
 	}
 
-	return ValidateEquip(OutItem, InOutSlotTag);
+	const EEquipmentResult Result = ValidateEquip(OutItem, InOutSlotTag);
+	if (Result != EEquipmentResult::Success)
+	{
+		return Result;
+	}
+	// The items it sends off a shared place go to the bag (D97): the bag must take them beside the swap.
+	for (const FGameplayTag& Conflict : GetPlaceConflicts(OutItem, InOutSlotTag))
+	{
+		if (!SourceInventory->CanAcceptItem(GetEquippedItem(Conflict)))
+		{
+			return EEquipmentResult::NoInventorySpace;
+		}
+	}
+	return EEquipmentResult::Success;
 }
 
 EEquipmentResult UEquipmentManagerComponent::ValidateUnequipToInventory(FGameplayTag SlotTag,

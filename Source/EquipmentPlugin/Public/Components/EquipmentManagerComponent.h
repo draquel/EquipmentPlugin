@@ -202,6 +202,18 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Equipment|Sheath")
 	bool IsSlotBlocked(FGameplayTag SlotTag) const;
 
+	/**
+	 * The slots whose items an equip of Item into SlotTag would send to the bag because they share a place on the body
+	 * (the sheath loadout plan, D97; UItemFragment_Equipment::SharesPlaceWithSlotTag): a quiver on the back beside a
+	 * shield, or a shield onto the back beside a quiver. SlotTag's own item (a swap) is not counted. The equip from a bag
+	 * moves them there first; an equip with no bag is refused (SlotOccupied).
+	 * @param Item    The item to equip
+	 * @param SlotTag The slot it would go into
+	 * @return The slots it would empty; empty when nothing conflicts
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Equipment|Sheath")
+	TArray<FGameplayTag> GetPlaceConflicts(const FItemInstance& Item, FGameplayTag SlotTag) const;
+
 	/** A sheath's item was drawn or sheathed (every machine). */
 	UPROPERTY(BlueprintAssignable, Category = "Equipment|Events")
 	FOnEquipmentDrawnChanged OnDrawnChanged;
@@ -478,6 +490,9 @@ private:
 
 	/** Validate that an item can go into a specific slot */
 	EEquipmentResult ValidateEquip(const FItemInstance& Item, FGameplayTag SlotTag) const;
+
+	/** Whether item A in SlotA and item B in SlotB cannot share their place on the body (either one's SharesPlaceWith*). */
+	bool ItemsShareNoPlace(const FItemInstance& A, FGameplayTag SlotA, const FItemInstance& B, FGameplayTag SlotB) const;
 
 	/**
 	 * Equip-from-inventory's predicate, run by the caller and again by the server: the item is in the inventory and fits

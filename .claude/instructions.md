@@ -86,7 +86,9 @@ EquipmentPlugin/
 12. **One item per place on the body (D95, D96).** A sheath is a place and holds one item; there is no second slot for the
    same place (the back holds a bow or a shield, not both). A sheath draws into its item's hand (`GetDrawHandFor`). An item
    with `DrawWithSlotTag` (the shield) follows its lead in `ReconcileHands` and is never drawn or sheathed on its own.
-   `BlockedSlotTags` is the hands' rule (two-handed items), not the sheaths'.
+   `BlockedSlotTags` is the hands' rule (two-handed items), not the sheaths'. Two slots that share a place say so on the
+   item (`SharesPlaceWithSlotTag`, `SharesPlaceWithItemTags`: the quiver and the back, D97); `GetPlaceConflicts` names
+   what an equip sends to the bag, checked in the shared predicate.
 
 ## Build.cs Dependencies
 
