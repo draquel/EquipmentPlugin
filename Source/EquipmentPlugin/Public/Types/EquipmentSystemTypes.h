@@ -43,7 +43,10 @@ struct EQUIPMENTPLUGIN_API FEquipmentSlot
 	UPROPERTY()
 	FGameplayTagContainer AcceptedItemTags;
 
-	/** Set on a sheath: the hand slot its item is drawn into (copied from FEquipmentSlotDefinition::DrawSlotTag, D77). */
+	/**
+	 * Set on a sheath: the hand slot its item is drawn into (FEquipmentSlotDefinition::DrawSlotTag, D77), or the item's own
+	 * hand while it holds one that names another (a shield on the back, the off hand: D95). Set by the authority.
+	 */
 	UPROPERTY(BlueprintReadOnly)
 	FGameplayTag DrawSlotTag;
 
@@ -53,13 +56,6 @@ struct EQUIPMENTPLUGIN_API FEquipmentSlot
 	 */
 	UPROPERTY(BlueprintReadOnly)
 	bool bDrawn = false;
-
-	/**
-	 * A sheath whose item is drawn whenever its hand is free and not blocked (a shield; copied from
-	 * FEquipmentSlotDefinition::bDrawWhenFree). Only the authority reads it.
-	 */
-	UPROPERTY(NotReplicated)
-	bool bDrawWhenFree = false;
 
 	/** Whether this slot's item is where it is used: an ordinary slot's always, a sheath's while drawn. */
 	bool IsInHand() const { return !DrawSlotTag.IsValid() || bDrawn; }

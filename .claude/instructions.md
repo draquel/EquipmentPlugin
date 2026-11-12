@@ -1,6 +1,7 @@
 # EquipmentPlugin — Plugin Instructions
 
-> State as of 2026-11-08 (sheaths, the equipment sheathing plan; before it code review CR5).
+> State as of 2026-11-11 (one item per place, the sheath loadout plan; sheaths, the equipment sheathing plan; before
+> them code review CR5).
 
 ## Purpose
 
@@ -82,6 +83,10 @@ EquipmentPlugin/
    into the hand slot: one home per item. Ask the hand with `GetHeldSlotTag` / `GetHeldItem`, never `MainHand` alone; a
    sheath's GAS and stance layer apply only while drawn; one item per hand (a draw sheathes the other, an equip into the
    hand slot sheathes the drawn one). The manager knows no animation: owners decide when to call `TryDraw`.
+12. **One item per place on the body (D95, D96).** A sheath is a place and holds one item; there is no second slot for the
+   same place (the back holds a bow or a shield, not both). A sheath draws into its item's hand (`GetDrawHandFor`). An item
+   with `DrawWithSlotTag` (the shield) follows its lead in `ReconcileHands` and is never drawn or sheathed on its own.
+   `BlockedSlotTags` is the hands' rule (two-handed items), not the sheaths'.
 
 ## Build.cs Dependencies
 

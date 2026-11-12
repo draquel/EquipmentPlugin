@@ -129,8 +129,8 @@ public:
 	 * request; the server runs the same predicate.
 	 * @param SheathSlotTag The sheath
 	 * @param Inventory     Where an item in the hand slot itself goes (one of the same player's; may be null)
-	 * @return Success (also when already drawn; optimistic on a client); IncompatibleSlot (no sheath, or no such hand);
-	 *         InvalidItem (an empty sheath); SlotOccupied (the hand slot holds an item and no inventory was given);
+	 * @return Success (also when already drawn; optimistic on a client); IncompatibleSlot (no sheath, no such hand, or an
+	 *         item that follows a lead: GetDrawLeadSlotTag); InvalidItem (an empty sheath); SlotOccupied (the hand slot holds an item and no inventory was given);
 	 *         NoInventorySpace (the inventory cannot take it)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Equipment|Sheath")
@@ -139,7 +139,7 @@ public:
 	/**
 	 * Put the item drawn into a hand back in its sheath (its abilities and effects revoked).
 	 * @param SlotTag The hand (Equipment.Slot.MainHand) or the sheath itself
-	 * @return Success (optimistic on a client); Failed when nothing drawn is there
+	 * @return Success (optimistic on a client); Failed when nothing drawn is there, or it follows a lead (GetDrawLeadSlotTag)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Equipment|Sheath")
 	EEquipmentResult TrySheathe(FGameplayTag SlotTag);
@@ -176,9 +176,20 @@ public:
 	bool IsSheathSlot(FGameplayTag SlotTag) const;
 
 	/**
+	 * The hand a sheath's item follows (the sheath loadout plan, D96; UItemFragment_Equipment::DrawWithSlotTag): a shield
+	 * on the back is in the off hand while the main hand holds a one-handed weapon and on the back otherwise, kept so by
+	 * the manager. Such an item is never drawn or sheathed on its own (TryDraw, TrySheathe refuse it).
+	 * @param SlotTag A sheath
+	 * @return The lead hand (Equipment.Slot.MainHand for a shield); invalid when the slot's item draws on its own or the
+	 *         slot is empty or no sheath
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Equipment|Sheath")
+	FGameplayTag GetDrawLeadSlotTag(FGameplayTag SlotTag) const;
+
+	/**
 	 * The slots the items in the hands block (each in-hand item's UItemFragment_Equipment::BlockedSlotTags): a bow or a
-	 * two-hander blocks the off hand. A blocked hand holds nothing drawn: its sheath's item stays sheathed, and an equip
-	 * or a draw into it is refused (HandBlocked).
+	 * pickaxe blocks the off hand. A blocked hand holds nothing drawn: its sheath's item stays sheathed, and an equip or a
+	 * draw into it is refused (HandBlocked).
 	 * @return The blocked slots; empty when nothing is held that blocks
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Equipment|Sheath")
@@ -459,6 +470,12 @@ private:
 	 */
 	void ResolveSheathTarget(const FItemInstance& Item, FGameplayTag& InOutSlotTag, bool& bInOutDraw) const;
 
+	/**
+	 * The hand a sheath draws an item into (D95): the item's EquipmentSlotTag when this owner has that hand as an ordinary
+	 * slot (a shield on the back, into the off hand), else the sheath definition's DrawSlotTag. Invalid for no sheath.
+	 */
+	FGameplayTag GetDrawHandFor(const FItemInstance& Item, FGameplayTag SheathSlotTag) const;
+
 	/** Validate that an item can go into a specific slot */
 	EEquipmentResult ValidateEquip(const FItemInstance& Item, FGameplayTag SlotTag) const;
 
@@ -486,13 +503,13 @@ private:
 	void SetDrawnInternal(FEquipmentSlot& Slot, bool bDrawn);
 
 	/**
-	 * Authority, after every change of what is equipped or drawn: sheathe what is drawn into a blocked hand, and draw a
-	 * bDrawWhenFree sheath's item into its hand when the hand is free and not blocked (a shield back onto the arm when the
-	 * bow goes away).
+	 * Authority, after every change of what is equipped or drawn: sheathe what is drawn into a blocked hand, and put an
+	 * item that follows a lead (GetDrawLeadSlotTag) in its hand while the lead's hand holds an item and its own hand is
+	 * free and not blocked, on its sheath otherwise (a shield onto the arm with the sword, onto the back without it, D96).
 	 */
-	void ReconcileBlockedHands();
+	void ReconcileHands();
 
-	/** ReconcileBlockedHands is running: the draws and sheathes it makes do not start it again. */
+	/** ReconcileHands is running: the draws and sheathes it makes do not start it again. */
 	bool bReconcilingHands = false;
 
 	/**

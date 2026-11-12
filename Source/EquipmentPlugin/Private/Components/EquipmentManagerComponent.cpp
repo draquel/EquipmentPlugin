@@ -83,7 +83,6 @@ void UEquipmentManagerComponent::BeginPlay()
 			Slot.AttachOffset = Def.AttachOffset;
 			Slot.AcceptedItemTags = Def.AcceptedItemTags;
 			Slot.DrawSlotTag = Def.DrawSlotTag;
-			Slot.bDrawWhenFree = Def.bDrawWhenFree && Def.DrawSlotTag.IsValid();
 			Slot.bIsOccupied = false;
 			EquipmentSlots.Add(Slot);
 		}
@@ -194,7 +193,7 @@ EEquipmentResult UEquipmentManagerComponent::TryEquipToSlot(const FItemInstance&
 	}
 
 	Internal_Equip(Item, SlotTag);
-	if (bDraw)
+	if (bDraw && !GetDrawLeadSlotTag(SlotTag).IsValid())
 	{
 		// The item is equipped either way; with an item in the hand slot itself and no inventory it stays sheathed.
 		const EEquipmentResult DrawResult = DrawSheath(SlotTag, nullptr);
@@ -372,7 +371,8 @@ EEquipmentResult UEquipmentManagerComponent::EquipFromInventory(const FGuid& Ite
 	}
 
 	Internal_Equip(Item, SlotTag);
-	if (bDraw && IsSheathSlot(SlotTag))
+	// A shield follows its lead (D96): it is already in the hand if the lead is, and is never drawn on its own.
+	if (bDraw && IsSheathSlot(SlotTag) && !GetDrawLeadSlotTag(SlotTag).IsValid())
 	{
 		// The equip stands whatever the draw answers (an item in the hand slot itself the bag cannot take).
 		return DrawSheath(SlotTag, SourceInventory);
@@ -481,7 +481,8 @@ EEquipmentResult UEquipmentManagerComponent::TryDraw(FGameplayTag SheathSlotTag,
 EEquipmentResult UEquipmentManagerComponent::TrySheathe(FGameplayTag SlotTag)
 {
 	const FEquipmentSlot* Target = FindSheatheTarget(SlotTag);
-	if (!Target || !Target->bDrawn)
+	// A shield goes back with its lead, not on its own (D96).
+	if (!Target || !Target->bDrawn || GetDrawLeadSlotTag(Target->SlotTag).IsValid())
 	{
 		return EEquipmentResult::Failed;
 	}
@@ -522,6 +523,36 @@ bool UEquipmentManagerComponent::IsSheathSlot(FGameplayTag SlotTag) const
 	return Slot && Slot->DrawSlotTag.IsValid();
 }
 
+FGameplayTag UEquipmentManagerComponent::GetDrawLeadSlotTag(FGameplayTag SlotTag) const
+{
+	const FEquipmentSlot* Slot = FindSlot(SlotTag);
+	if (!Slot || !Slot->bIsOccupied || !Slot->DrawSlotTag.IsValid())
+	{
+		return FGameplayTag();
+	}
+	const UItemFragment_Equipment* EquipFrag = GetEquipmentFragment(Slot->EquippedItem);
+	return EquipFrag && EquipFrag->DrawWithSlotTag != Slot->DrawSlotTag ? EquipFrag->DrawWithSlotTag : FGameplayTag();
+}
+
+FGameplayTag UEquipmentManagerComponent::GetDrawHandFor(const FItemInstance& Item, FGameplayTag SheathSlotTag) const
+{
+	const FEquipmentSlotDefinition* Def = AvailableSlots.FindByPredicate([&SheathSlotTag](const FEquipmentSlotDefinition& D)
+	{
+		return D.SlotTag == SheathSlotTag;
+	});
+	const FEquipmentSlot* Sheath = FindSlot(SheathSlotTag);
+	const FGameplayTag Default = Def ? Def->DrawSlotTag : (Sheath ? Sheath->DrawSlotTag : FGameplayTag());
+	if (!Default.IsValid())
+	{
+		return FGameplayTag();
+	}
+	// The item's own hand when this owner has it as an ordinary slot: the back draws a bow into the main hand and a shield
+	// into the off hand (D95).
+	const UItemFragment_Equipment* EquipFrag = Item.IsValid() ? GetEquipmentFragment(Item) : nullptr;
+	const FEquipmentSlot* ItemHand = EquipFrag ? FindSlot(EquipFrag->EquipmentSlotTag) : nullptr;
+	return ItemHand && !ItemHand->DrawSlotTag.IsValid() ? ItemHand->SlotTag : Default;
+}
+
 FGameplayTagContainer UEquipmentManagerComponent::GetBlockedSlotTags() const
 {
 	FGameplayTagContainer Blocked;
@@ -555,6 +586,11 @@ EEquipmentResult UEquipmentManagerComponent::ValidateDraw(FGameplayTag SheathSlo
 	{
 		return EEquipmentResult::InvalidItem;
 	}
+	// A shield comes into the hand with its lead and goes back with it, never on its own (D96; ReconcileHands).
+	if (GetDrawLeadSlotTag(SheathSlotTag).IsValid())
+	{
+		return EEquipmentResult::IncompatibleSlot;
+	}
 	const FEquipmentSlot* Hand = FindSlot(Sheath->DrawSlotTag);
 	if (!Hand)
 	{
@@ -564,14 +600,14 @@ EEquipmentResult UEquipmentManagerComponent::ValidateDraw(FGameplayTag SheathSlo
 	{
 		return EEquipmentResult::Success;
 	}
-	// A hand an item in another hand blocks takes nothing (a shield beside a bow).
+	// A hand an item in another hand blocks takes nothing (the off hand beside a pickaxe).
 	if (IsSlotBlocked(Sheath->DrawSlotTag))
 	{
 		return EEquipmentResult::HandBlocked;
 	}
 	// One item per hand: an item in the hand slot itself (one without a sheath) has to go to the bag first, and so does
 	// one in a hand slot the drawn item blocks (a torch in the off hand when the bow comes out). A sheath's item drawn into
-	// a blocked hand goes back to its sheath on its own (ReconcileBlockedHands).
+	// a blocked hand goes back to its sheath on its own (ReconcileHands).
 	TArray<const FEquipmentSlot*> ToBag;
 	if (Hand->bIsOccupied)
 	{
@@ -692,16 +728,17 @@ void UEquipmentManagerComponent::SetDrawnInternal(FEquipmentSlot& Slot, bool bDr
 	}
 	ApplyHandState(Slot);
 	OnEquipmentChanged.Broadcast();
-	ReconcileBlockedHands();
+	ReconcileHands();
 }
 
-void UEquipmentManagerComponent::ReconcileBlockedHands()
+void UEquipmentManagerComponent::ReconcileHands()
 {
 	if (bReconcilingHands || !HasMutationAuthority())
 	{
 		return;
 	}
 	TGuardValue<bool> Reconciling(bReconcilingHands, true);
+	// What is drawn into a blocked hand goes back to its sheath (a shield when a pickaxe comes out, G175).
 	const FGameplayTagContainer Blocked = GetBlockedSlotTags();
 	for (FEquipmentSlot& Slot : EquipmentSlots)
 	{
@@ -710,12 +747,21 @@ void UEquipmentManagerComponent::ReconcileBlockedHands()
 			SetDrawnInternal(Slot, false);
 		}
 	}
+	// A shield follows its lead (D96): in its hand while the lead's hand holds an item that leaves its hand free (a sword,
+	// not a pickaxe) and nothing else is in its hand (a torch), on its sheath otherwise.
 	for (FEquipmentSlot& Slot : EquipmentSlots)
 	{
-		if (Slot.bDrawWhenFree && Slot.bIsOccupied && !Slot.bDrawn && !Blocked.HasTagExact(Slot.DrawSlotTag)
-			&& !IsSlotOccupied(Slot.DrawSlotTag) && !FindDrawnSheath(Slot.DrawSlotTag))
+		const FGameplayTag Lead = GetDrawLeadSlotTag(Slot.SlotTag);
+		if (!Lead.IsValid())
 		{
-			SetDrawnInternal(Slot, true);
+			continue;
+		}
+		const FEquipmentSlot* Drawn = FindDrawnSheath(Slot.DrawSlotTag);
+		const bool bWanted = GetHeldItem(Lead).IsValid() && !Blocked.HasTagExact(Slot.DrawSlotTag)
+			&& !IsSlotOccupied(Slot.DrawSlotTag) && (!Drawn || Drawn == &Slot);
+		if (bWanted != Slot.bDrawn)
+		{
+			SetDrawnInternal(Slot, bWanted);
 		}
 	}
 }
@@ -937,7 +983,7 @@ void UEquipmentManagerComponent::ResolveSheathTarget(const FItemInstance& Item, 
 	// The item asked into a hand (the panel's Main Hand, an old save's main-hand entry) while it has a sheath for that hand.
 	const FGameplayTag Sheath = FindSlotMatching(EquipFrag->SheathSlotTag);
 	const FEquipmentSlot* SheathSlot = Sheath.IsValid() ? FindSlot(Sheath) : nullptr;
-	if (SheathSlot && SheathSlot->DrawSlotTag == InOutSlotTag)
+	if (SheathSlot && GetDrawHandFor(Item, Sheath) == InOutSlotTag)
 	{
 		InOutSlotTag = Sheath;
 		bInOutDraw = true;
@@ -964,7 +1010,8 @@ EEquipmentResult UEquipmentManagerComponent::ValidateEquip(const FItemInstance& 
 	}
 
 	// A hand slot an item in another hand blocks takes nothing (a torch beside a bow). A sheath for that hand takes its
-	// item, which stays sheathed until the hand is free.
+	// item, which stays sheathed until the hand is free. A sheath is one place on the body and takes one item (D95): an
+	// occupied one is a swap from the bag, a refusal without one (the callers).
 	if (IsSlotBlocked(SlotTag))
 	{
 		return EEquipmentResult::HandBlocked;
@@ -1086,7 +1133,12 @@ void UEquipmentManagerComponent::Internal_Equip(const FItemInstance& Item, FGame
 
 	Slot->EquippedItem = Item;
 	Slot->bIsOccupied = true;
-	Slot->bDrawn = false; // a sheath's item arrives sheathed; TryDraw takes it into the hand
+	if (Slot->DrawSlotTag.IsValid())
+	{
+		// A sheath draws into its item's hand (D95): the back holds a bow for the main hand or a shield for the off hand.
+		Slot->DrawSlotTag = GetDrawHandFor(Item, SlotTag);
+	}
+	Slot->bDrawn = false; // a sheath's item arrives sheathed; TryDraw (or its lead, D96) takes it into the hand
 	Slot->bAppliedDrawn = false;
 
 	ApplyVisuals(Item, SlotTag);
@@ -1102,7 +1154,7 @@ void UEquipmentManagerComponent::Internal_Equip(const FItemInstance& Item, FGame
 	{
 		NotifyCarriedLight(*Slot);
 	}
-	ReconcileBlockedHands();
+	ReconcileHands();
 }
 
 FItemInstance UEquipmentManagerComponent::Internal_Unequip(FGameplayTag SlotTag)
@@ -1124,6 +1176,10 @@ FItemInstance UEquipmentManagerComponent::Internal_Unequip(FGameplayTag SlotTag)
 
 	Slot->EquippedItem = FItemInstance();
 	Slot->bIsOccupied = false;
+	if (Slot->DrawSlotTag.IsValid())
+	{
+		Slot->DrawSlotTag = GetDrawHandFor(FItemInstance(), SlotTag); // the sheath's own hand again
+	}
 	Slot->bDrawn = false;
 	Slot->bAppliedDrawn = false;
 	Slot->FuelAccumulatorSeconds = 0.f;
@@ -1135,7 +1191,7 @@ FItemInstance UEquipmentManagerComponent::Internal_Unequip(FGameplayTag SlotTag)
 	{
 		NotifyCarriedLight(*Slot);
 	}
-	ReconcileBlockedHands();
+	ReconcileHands();
 
 	return UnequippedItem;
 }
