@@ -175,6 +175,22 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Equipment|Sheath")
 	bool IsSheathSlot(FGameplayTag SlotTag) const;
 
+	/**
+	 * The slots the items in the hands block (each in-hand item's UItemFragment_Equipment::BlockedSlotTags): a bow or a
+	 * two-hander blocks the off hand. A blocked hand holds nothing drawn: its sheath's item stays sheathed, and an equip
+	 * or a draw into it is refused (HandBlocked).
+	 * @return The blocked slots; empty when nothing is held that blocks
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Equipment|Sheath")
+	FGameplayTagContainer GetBlockedSlotTags() const;
+
+	/**
+	 * @param SlotTag A hand slot
+	 * @return True when an item in another hand blocks it (GetBlockedSlotTags)
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Equipment|Sheath")
+	bool IsSlotBlocked(FGameplayTag SlotTag) const;
+
 	/** A sheath's item was drawn or sheathed (every machine). */
 	UPROPERTY(BlueprintAssignable, Category = "Equipment|Events")
 	FOnEquipmentDrawnChanged OnDrawnChanged;
@@ -468,6 +484,16 @@ private:
 
 	/** Authority: draw or sheathe a sheath's item (GAS, the visual's seat, the layer, the events). */
 	void SetDrawnInternal(FEquipmentSlot& Slot, bool bDrawn);
+
+	/**
+	 * Authority, after every change of what is equipped or drawn: sheathe what is drawn into a blocked hand, and draw a
+	 * bDrawWhenFree sheath's item into its hand when the hand is free and not blocked (a shield back onto the arm when the
+	 * bow goes away).
+	 */
+	void ReconcileBlockedHands();
+
+	/** ReconcileBlockedHands is running: the draws and sheathes it makes do not start it again. */
+	bool bReconcilingHands = false;
 
 	/**
 	 * Every machine: seat the slot's visual for its state, link or unlink its stance layer, and announce a change of the

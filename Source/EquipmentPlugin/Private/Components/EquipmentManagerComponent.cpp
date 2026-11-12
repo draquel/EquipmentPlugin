@@ -83,6 +83,7 @@ void UEquipmentManagerComponent::BeginPlay()
 			Slot.AttachOffset = Def.AttachOffset;
 			Slot.AcceptedItemTags = Def.AcceptedItemTags;
 			Slot.DrawSlotTag = Def.DrawSlotTag;
+			Slot.bDrawWhenFree = Def.bDrawWhenFree && Def.DrawSlotTag.IsValid();
 			Slot.bIsOccupied = false;
 			EquipmentSlots.Add(Slot);
 		}
@@ -521,6 +522,28 @@ bool UEquipmentManagerComponent::IsSheathSlot(FGameplayTag SlotTag) const
 	return Slot && Slot->DrawSlotTag.IsValid();
 }
 
+FGameplayTagContainer UEquipmentManagerComponent::GetBlockedSlotTags() const
+{
+	FGameplayTagContainer Blocked;
+	for (const FEquipmentSlot& Slot : EquipmentSlots)
+	{
+		if (!Slot.bIsOccupied || !Slot.IsInHand())
+		{
+			continue;
+		}
+		if (const UItemFragment_Equipment* EquipFrag = GetEquipmentFragment(Slot.EquippedItem))
+		{
+			Blocked.AppendTags(EquipFrag->BlockedSlotTags);
+		}
+	}
+	return Blocked;
+}
+
+bool UEquipmentManagerComponent::IsSlotBlocked(FGameplayTag SlotTag) const
+{
+	return SlotTag.IsValid() && GetBlockedSlotTags().HasTagExact(SlotTag);
+}
+
 EEquipmentResult UEquipmentManagerComponent::ValidateDraw(FGameplayTag SheathSlotTag, const UInventoryComponent* Inventory) const
 {
 	const FEquipmentSlot* Sheath = FindSlot(SheathSlotTag);
@@ -541,14 +564,37 @@ EEquipmentResult UEquipmentManagerComponent::ValidateDraw(FGameplayTag SheathSlo
 	{
 		return EEquipmentResult::Success;
 	}
-	// One item per hand: an item in the hand slot itself (one without a sheath) has to go to the bag first.
+	// A hand an item in another hand blocks takes nothing (a shield beside a bow).
+	if (IsSlotBlocked(Sheath->DrawSlotTag))
+	{
+		return EEquipmentResult::HandBlocked;
+	}
+	// One item per hand: an item in the hand slot itself (one without a sheath) has to go to the bag first, and so does
+	// one in a hand slot the drawn item blocks (a torch in the off hand when the bow comes out). A sheath's item drawn into
+	// a blocked hand goes back to its sheath on its own (ReconcileBlockedHands).
+	TArray<const FEquipmentSlot*> ToBag;
 	if (Hand->bIsOccupied)
+	{
+		ToBag.Add(Hand);
+	}
+	if (const UItemFragment_Equipment* EquipFrag = GetEquipmentFragment(Sheath->EquippedItem))
+	{
+		for (const FGameplayTag& BlockedTag : EquipFrag->BlockedSlotTags)
+		{
+			const FEquipmentSlot* Blocked = FindSlot(BlockedTag);
+			if (Blocked && Blocked != Hand && Blocked->bIsOccupied && !Blocked->DrawSlotTag.IsValid())
+			{
+				ToBag.Add(Blocked);
+			}
+		}
+	}
+	for (const FEquipmentSlot* Slot : ToBag)
 	{
 		if (!Inventory)
 		{
 			return EEquipmentResult::SlotOccupied;
 		}
-		if (!Inventory->CanAcceptItem(Hand->EquippedItem))
+		if (!Inventory->CanAcceptItem(Slot->EquippedItem))
 		{
 			return EEquipmentResult::NoInventorySpace;
 		}
@@ -569,9 +615,24 @@ EEquipmentResult UEquipmentManagerComponent::DrawSheath(FGameplayTag SheathSlotT
 		return EEquipmentResult::Success;
 	}
 	const FGameplayTag HandTag = Sheath->DrawSlotTag;
+	TArray<FGameplayTag> ToBag;
 	if (IsSlotOccupied(HandTag))
 	{
-		const EEquipmentResult Cleared = UnequipToInventory(HandTag, Inventory);
+		ToBag.Add(HandTag);
+	}
+	if (const UItemFragment_Equipment* EquipFrag = GetEquipmentFragment(Sheath->EquippedItem))
+	{
+		for (const FGameplayTag& BlockedTag : EquipFrag->BlockedSlotTags)
+		{
+			if (BlockedTag != HandTag && IsSlotOccupied(BlockedTag) && !IsSheathSlot(BlockedTag))
+			{
+				ToBag.Add(BlockedTag);
+			}
+		}
+	}
+	for (const FGameplayTag& SlotTag : ToBag)
+	{
+		const EEquipmentResult Cleared = UnequipToInventory(SlotTag, Inventory);
 		if (Cleared != EEquipmentResult::Success)
 		{
 			return Cleared;
@@ -631,6 +692,32 @@ void UEquipmentManagerComponent::SetDrawnInternal(FEquipmentSlot& Slot, bool bDr
 	}
 	ApplyHandState(Slot);
 	OnEquipmentChanged.Broadcast();
+	ReconcileBlockedHands();
+}
+
+void UEquipmentManagerComponent::ReconcileBlockedHands()
+{
+	if (bReconcilingHands || !HasMutationAuthority())
+	{
+		return;
+	}
+	TGuardValue<bool> Reconciling(bReconcilingHands, true);
+	const FGameplayTagContainer Blocked = GetBlockedSlotTags();
+	for (FEquipmentSlot& Slot : EquipmentSlots)
+	{
+		if (Slot.bDrawn && Blocked.HasTagExact(Slot.DrawSlotTag))
+		{
+			SetDrawnInternal(Slot, false);
+		}
+	}
+	for (FEquipmentSlot& Slot : EquipmentSlots)
+	{
+		if (Slot.bDrawWhenFree && Slot.bIsOccupied && !Slot.bDrawn && !Blocked.HasTagExact(Slot.DrawSlotTag)
+			&& !IsSlotOccupied(Slot.DrawSlotTag) && !FindDrawnSheath(Slot.DrawSlotTag))
+		{
+			SetDrawnInternal(Slot, true);
+		}
+	}
 }
 
 void UEquipmentManagerComponent::ApplyHandState(FEquipmentSlot& Slot)
@@ -876,6 +963,13 @@ EEquipmentResult UEquipmentManagerComponent::ValidateEquip(const FItemInstance& 
 		return EEquipmentResult::IncompatibleSlot;
 	}
 
+	// A hand slot an item in another hand blocks takes nothing (a torch beside a bow). A sheath for that hand takes its
+	// item, which stays sheathed until the hand is free.
+	if (IsSlotBlocked(SlotTag))
+	{
+		return EEquipmentResult::HandBlocked;
+	}
+
 	// Check accepted item tags (if any are configured)
 	if (Slot->AcceptedItemTags.Num() > 0)
 	{
@@ -982,9 +1076,11 @@ void UEquipmentManagerComponent::Internal_Equip(const FItemInstance& Item, FGame
 		return;
 	}
 
-	// One item per hand: an item equipped into a hand slot sends the weapon drawn into that hand back to its sheath.
+	// One item per hand: an item equipped into a hand slot sends the weapon drawn into that hand back to its sheath. The
+	// hands are reconciled once the item is in (below): before that the hand looks free, and a shield would come back.
 	if (FEquipmentSlot* Drawn = FindDrawnSheath(SlotTag))
 	{
+		TGuardValue<bool> Reconciling(bReconcilingHands, true);
 		SetDrawnInternal(*Drawn, false);
 	}
 
@@ -1006,6 +1102,7 @@ void UEquipmentManagerComponent::Internal_Equip(const FItemInstance& Item, FGame
 	{
 		NotifyCarriedLight(*Slot);
 	}
+	ReconcileBlockedHands();
 }
 
 FItemInstance UEquipmentManagerComponent::Internal_Unequip(FGameplayTag SlotTag)
@@ -1038,6 +1135,7 @@ FItemInstance UEquipmentManagerComponent::Internal_Unequip(FGameplayTag SlotTag)
 	{
 		NotifyCarriedLight(*Slot);
 	}
+	ReconcileBlockedHands();
 
 	return UnequippedItem;
 }

@@ -54,6 +54,13 @@ struct EQUIPMENTPLUGIN_API FEquipmentSlot
 	UPROPERTY(BlueprintReadOnly)
 	bool bDrawn = false;
 
+	/**
+	 * A sheath whose item is drawn whenever its hand is free and not blocked (a shield; copied from
+	 * FEquipmentSlotDefinition::bDrawWhenFree). Only the authority reads it.
+	 */
+	UPROPERTY(NotReplicated)
+	bool bDrawWhenFree = false;
+
 	/** Whether this slot's item is where it is used: an ordinary slot's always, a sheath's while drawn. */
 	bool IsInHand() const { return !DrawSlotTag.IsValid() || bDrawn; }
 
