@@ -243,6 +243,16 @@ the back. Its state is its lead's: a draw of it is refused by `ValidateDraw` (`I
 effects (its Defense) follow the hand as any sheath's. The swap is instant, at the sword's draw or sheathe: there is no
 montage for the shield. Being equipped is not coupled: a shield stays on the back when the sword goes to the bag.
 
+**A shared place (D97).** Two slots can share a place on the body: an item's Equipment fragment names the slot whose
+place it shares (`SharesPlaceWithSlotTag`) and the items that can be there with it (`SharesPlaceWithItemTags`, matched
+against the other item's definition tags). The character's quiver (`Equipment.Slot.Quiver`, on the back, its opening over
+the right shoulder blade) shares the back's sheath with a bow (`Item.Type.Bow`) only. `GetPlaceConflicts(Item, Slot)`
+names the slots whose items an equip would send off (either item's rule counts, the slot's own item is a swap, not a
+conflict). An equip from the bag sends them to the bag first, each step validated before it moves anything; the
+predicate both sides run (`ValidateEquipFromInventory`) refuses with `NoInventorySpace` when the bag cannot take them, and
+an equip with no bag is refused (`SlotOccupied`). So a shield or a two-hander onto the back sends the quiver to the bag,
+and the quiver sends a shield or a two-hander there; an empty back keeps the quiver. Test `Equipment.Sheath.SharedPlace`.
+
 **Blocked hands (G175).** An item can empty other hands while it is in its own: its Equipment fragment's
 `BlockedSlotTags` (the bow and the pickaxes name `Equipment.Slot.OffHand`: they need both hands). `GetBlockedSlotTags()`
 gathers them from every item in a hand, `IsSlotBlocked(Slot)` asks for one. A blocked hand takes nothing: a draw into it
@@ -424,7 +434,9 @@ the sheath drawn), `Sheath.DrawAndSheathe` (the results, one item per hand, the 
 (the client's predicate and requests, `OnRep_EquipmentSlots` acting on a draw and a sheathe), `Sheath.OnePerPlace` (the
 back holds a bow or a shield: a direct equip refused, a swap from a full bag, the draw hand by the item, the client's
 swap request), `Sheath.DrawsWithLead` (the shield drawn and sheathed with the sword, on the back unarmed, beside a pickaxe
-and behind a torch, its own draw and sheathe refused on both sides, its GAS with the hand), `Sheath.SlotWidgetColour`,
+and behind a torch, its own draw and sheathe refused on both sides, its GAS with the hand), `Sheath.SharedPlace` (the
+quiver beside the bow, sent to the bag by a shield and sending it, a direct equip and a full bag refused at home and on
+the server), `Sheath.SlotWidgetColour`,
 `Durability.EmptySlotHasNone`, `Durability.LossMarksTheItem` (the worn item is no longer `Identical` to its state
 before, G136), `LightSource.IntensityRule` / `NothingCarried`, and
 `GAS.ResolvesAbilitySystemThroughInterface` in the GAS module. VoxelCharacterPlugin's `VoxelCharacter.EquipmentLoop.*` tests cover

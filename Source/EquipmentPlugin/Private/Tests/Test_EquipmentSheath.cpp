@@ -752,4 +752,94 @@ bool FEquipmentSheathDrawsWithLeadTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ===========================================================================
+// A shared place (D97): the quiver shares the back with a bow only
+// ===========================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEquipmentSheathSharedPlaceTest,
+	"Equipment.Sheath.SharedPlace",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEquipmentSheathSharedPlaceTest::RunTest(const FString& Parameters)
+{
+	using namespace EquipmentSheathTestHelpers;
+	CGFTesting::FTestGameInstance Game;
+	UItemDatabaseSubsystem* Database = Game.GetSubsystem<UItemDatabaseSubsystem>();
+	if (!TestNotNull(TEXT("The item database"), Database))
+	{
+		return true;
+	}
+	const FGameplayTag QuiverSlot = CGFGameplayTags::Equipment_Slot_Quiver;
+	const FPrimaryAssetId Bow = RegisterDefinition(Database, TEXT("SharedPlaceBow"), MainHand(), Back(), [](UItemFragment_Equipment& Fragment)
+	{
+		CastChecked<UItemDefinition>(Fragment.GetOuter())->ItemTags.AddTag(CGFGameplayTags::Item_Type_Bow);
+		Fragment.BlockedSlotTags.AddTag(OffHand());
+	});
+	const FPrimaryAssetId Shield = RegisterDefinition(Database, TEXT("SharedPlaceShield"), OffHand(), Back(), MakeShield);
+	const FPrimaryAssetId Quiver = RegisterDefinition(Database, TEXT("SharedPlaceQuiver"), QuiverSlot, FGameplayTag(), [](UItemFragment_Equipment& Fragment)
+	{
+		Fragment.SharesPlaceWithSlotTag = CGFGameplayTags::Equipment_Slot_Sheath_Back;
+		Fragment.SharesPlaceWithItemTags.AddTag(CGFGameplayTags::Item_Type_Bow);
+	});
+
+	AActor* Owner = Game.SpawnOwner();
+	UEquipmentManagerComponent* Carrier = MakeCarrier(Owner);
+	AddSlot(Carrier, OffHand(), FGameplayTag(), TEXT("hand_l"));
+	AddSlot(Carrier, QuiverSlot, FGameplayTag(), TEXT("spine_05"));
+	UInventoryComponent* Bag = MakeInventory(Owner, 4);
+	const FItemInstance BowItem = Database->CreateItemInstance(Bow, 1);
+	const FItemInstance ShieldItem = Database->CreateItemInstance(Shield, 1);
+	const FItemInstance QuiverItem = Database->CreateItemInstance(Quiver, 1);
+	PlaceItemInSlot(Bag, BowItem, 0);
+	PlaceItemInSlot(Bag, ShieldItem, 1);
+	PlaceItemInSlot(Bag, QuiverItem, 2);
+
+	// The bow and the quiver share the back.
+	TestEqual(TEXT("The bow equips"), Result(Carrier->TryEquipFromInventory(BowItem.InstanceId, Bag, FGameplayTag())), Result(EEquipmentResult::Success));
+	TestEqual(TEXT("The quiver equips beside the bow"), Result(Carrier->TryEquipFromInventory(QuiverItem.InstanceId, Bag, FGameplayTag())),
+		Result(EEquipmentResult::Success));
+	TestTrue(TEXT("The quiver is worn"), SameItem(Carrier->GetEquippedItem(QuiverSlot), QuiverItem));
+	TestTrue(TEXT("Nothing conflicts with the bow"), Carrier->GetPlaceConflicts(BowItem, Back()).IsEmpty());
+
+	// A shield onto the back: the bow swaps to the bag and the quiver goes there too.
+	TestEqual(TEXT("A shield beside the quiver is named a conflict"), Carrier->GetPlaceConflicts(ShieldItem, Back()).Num(), 1);
+	TestEqual(TEXT("The shield equips"), Result(Carrier->TryEquipFromInventory(ShieldItem.InstanceId, Bag, FGameplayTag())), Result(EEquipmentResult::Success));
+	TestTrue(TEXT("The shield is on the back"), SameItem(Carrier->GetEquippedItem(Back()), ShieldItem));
+	TestFalse(TEXT("The quiver left"), Carrier->IsSlotOccupied(QuiverSlot));
+	TestTrue(TEXT("The quiver is in the bag"), Bag->FindSlotIndexByInstanceId(QuiverItem.InstanceId) != INDEX_NONE);
+	TestTrue(TEXT("The bow is in the bag"), Bag->FindSlotIndexByInstanceId(BowItem.InstanceId) != INDEX_NONE);
+
+	// The quiver with the shield on the back: the shield goes to the bag; the back stays empty.
+	TestEqual(TEXT("The quiver equips again"), Result(Carrier->TryEquipFromInventory(QuiverItem.InstanceId, Bag, FGameplayTag())), Result(EEquipmentResult::Success));
+	TestFalse(TEXT("The shield left the back"), Carrier->IsSlotOccupied(Back()));
+	TestTrue(TEXT("The shield is in the bag"), Bag->FindSlotIndexByInstanceId(ShieldItem.InstanceId) != INDEX_NONE);
+	TestTrue(TEXT("The quiver is worn on an empty back"), Carrier->IsSlotOccupied(QuiverSlot));
+
+	// With no bag to take the quiver a shield is refused, nothing moved.
+	TestEqual(TEXT("A direct shield beside the quiver is refused"), Result(Carrier->TryEquip(Database->CreateItemInstance(Shield, 1))),
+		Result(EEquipmentResult::SlotOccupied));
+	TestTrue(TEXT("The quiver stays"), Carrier->IsSlotOccupied(QuiverSlot));
+
+	// A full bag cannot take the quiver beside the swap: refused before anything moves, at home and on the server.
+	UInventoryComponent* FullBag = MakeInventory(Owner, 1);
+	const FItemInstance OtherShield = Database->CreateItemInstance(Shield, 1);
+	PlaceItemInSlot(FullBag, OtherShield, 0);
+	TestEqual(TEXT("A shield from a full bag beside the quiver is refused"),
+		Result(Carrier->TryEquipFromInventory(OtherShield.InstanceId, FullBag, FGameplayTag())), Result(EEquipmentResult::NoInventorySpace));
+	TestTrue(TEXT("The quiver stays worn"), SameItem(Carrier->GetEquippedItem(QuiverSlot), QuiverItem));
+	TestTrue(TEXT("The shield stays in its bag"), SameItem(FullBag->GetItemInSlot(0), OtherShield));
+	AActor* ClientPlayer = Game.SpawnRemoteOwner();
+	UEquipmentManagerComponent* ClientEquipment = MakeCarrier(ClientPlayer);
+	AddSlot(ClientEquipment, OffHand(), FGameplayTag(), TEXT("hand_l"));
+	AddSlot(ClientEquipment, QuiverSlot, FGameplayTag(), TEXT("spine_05"));
+	PlaceEquipped(ClientEquipment, QuiverItem, QuiverSlot); // replicated
+	UInventoryComponent* ClientBag = MakeInventory(ClientPlayer, 1);
+	PlaceItemInSlot(ClientBag, OtherShield, 0);
+	TestEqual(TEXT("The client's check refuses it too"), Result(ClientEquipment->TryEquipFromInventory(OtherShield.InstanceId, ClientBag, FGameplayTag())),
+		Result(EEquipmentResult::NoInventorySpace));
+
+	Release(Database, { Bow, Shield, Quiver });
+	return true;
+}
+
 #endif // WITH_AUTOMATION_TESTS

@@ -5,7 +5,8 @@
 > item's hand, the shield following the drawn one-hander, G175's `bDrawWhenFree` and `Sheath.ShieldBack` retired, the
 > `Equipment.Slot.Quiver` tag reserved. As it is now: `EQUIPMENT_SYSTEM.md` ("Sheaths" › One item per place, The shield
 > beside a one-handed weapon, Blocked hands), `CHARACTER_SYSTEM.md` ("GAS" › the sword and the shield, Carried weapons),
-> `COMMON_TYPES.md`, `ITEM_INVENTORY_SYSTEM.md`. Left open: the quiver's place (section 5, corrected after the build).
+> `COMMON_TYPES.md`, `ITEM_INVENTORY_SYSTEM.md`. Left open: the quiver's place (section 5, corrected after the build);
+> settled by the user the same day, the back with the opening over the right shoulder blade (D97 in `FINDINGS.md`).
 > Owner as planned: EquipmentPlugin; the fragment in ItemInventoryPlugin, the tags in CommonGameFramework, the
 > character in VoxelCharacterPlugin, the content, the redirect and the shots in the parent. Numbers: G177, D95-D97.
 
