@@ -8,6 +8,7 @@
 #include "EquipmentSystemTypes.generated.h"
 
 class UPointLightComponent;
+class UAnimInstance;
 
 /**
  * Runtime equipment slot — holds the currently equipped item and visual state.
@@ -42,6 +43,23 @@ struct EQUIPMENTPLUGIN_API FEquipmentSlot
 	UPROPERTY()
 	FGameplayTagContainer AcceptedItemTags;
 
+	/**
+	 * Set on a sheath: the hand slot its item is drawn into (FEquipmentSlotDefinition::DrawSlotTag, D77), or the item's own
+	 * hand while it holds one that names another (a shield on the back, the off hand: D95). Set by the authority.
+	 */
+	UPROPERTY(BlueprintReadOnly)
+	FGameplayTag DrawSlotTag;
+
+	/**
+	 * A sheath's item is in its hand (D77): its visual rides the hand with the item's hand fit, and its abilities, effects
+	 * and stance layer apply. Always false on a slot that is no sheath. Changed on the authority (TryDraw, TrySheathe).
+	 */
+	UPROPERTY(BlueprintReadOnly)
+	bool bDrawn = false;
+
+	/** Whether this slot's item is where it is used: an ordinary slot's always, a sheath's while drawn. */
+	bool IsInHand() const { return !DrawSlotTag.IsValid() || bDrawn; }
+
 	// -----------------------------------------------------------------------
 	// Non-replicated visual state (rebuilt locally from replicated item data)
 	// -----------------------------------------------------------------------
@@ -49,6 +67,25 @@ struct EQUIPMENTPLUGIN_API FEquipmentSlot
 	/** Attached visual mesh component (static or skeletal) */
 	UPROPERTY(NotReplicated)
 	TObjectPtr<USceneComponent> AttachedVisualComponent;
+
+	/**
+	 * The item instance the attached visual was built for. A client sees a hotbar swap as one replication of an occupied
+	 * slot holding another item (the server unequipped and equipped in one frame): the visual is rebuilt when this differs
+	 * from EquippedItem's id (G153).
+	 */
+	UPROPERTY(NotReplicated)
+	FGuid AttachedVisualItemId;
+
+	/** The anim layer linked for the attached visual's item, unlinked when the visual goes (the fragment of a swapped-in item names another). */
+	UPROPERTY(NotReplicated)
+	TSubclassOf<UAnimInstance> AttachedAnimLayerClass;
+
+	/**
+	 * The drawn state this machine last acted on (seated the visual, linked the layer, announced OnDrawnChanged): a client
+	 * compares it with the replicated bDrawn to see a draw or a sheathe of the same item.
+	 */
+	UPROPERTY(NotReplicated)
+	bool bAppliedDrawn = false;
 
 	/** Async mesh load handle */
 	TSharedPtr<FStreamableHandle> MeshLoadHandle;

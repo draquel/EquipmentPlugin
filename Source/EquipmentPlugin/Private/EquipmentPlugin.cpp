@@ -111,6 +111,42 @@ void FEquipmentPluginModule::StartupModule()
 				UE_LOG(LogEQP, Log, TEXT("Equipment.UnequipAll: Unequipped %d item(s)."), Unequipped);
 			})
 	));
+
+	// Equipment.Draw <SheathSlotTag>
+	ConsoleCommands.Add(MakeUnique<FAutoConsoleCommandWithWorldAndArgs>(
+		TEXT("Equipment.Draw"),
+		TEXT("Draw a sheath's item into its hand, no animation (the one drawn before goes back to its sheath). Usage: Equipment.Draw <SheathSlotTag>, e.g. Equipment.Slot.Sheath.HipLeft"),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda(
+			[](const TArray<FString>& Args, UWorld* World)
+			{
+				UEquipmentManagerComponent* Equipment = FindPlayerEquipment(World);
+				const FGameplayTag SlotTag = Args.Num() > 0 ? FGameplayTag::RequestGameplayTag(FName(*Args[0]), false) : FGameplayTag();
+				if (!Equipment || !SlotTag.IsValid())
+				{
+					UE_LOG(LogEQP, Warning, TEXT("Equipment.Draw: Usage: Equipment.Draw <SheathSlotTag> (a player with equipment needed)."));
+					return;
+				}
+				UE_LOG(LogEQP, Log, TEXT("Equipment.Draw: %s = %s"), *SlotTag.ToString(), *UEnum::GetValueAsString(Equipment->TryDraw(SlotTag)));
+			})
+	));
+
+	// Equipment.Sheathe [SlotTag]
+	ConsoleCommands.Add(MakeUnique<FAutoConsoleCommandWithWorldAndArgs>(
+		TEXT("Equipment.Sheathe"),
+		TEXT("Put the item drawn into a hand back in its sheath, no animation. Usage: Equipment.Sheathe [HandOrSheathSlotTag=Equipment.Slot.MainHand]"),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda(
+			[](const TArray<FString>& Args, UWorld* World)
+			{
+				UEquipmentManagerComponent* Equipment = FindPlayerEquipment(World);
+				const FGameplayTag SlotTag = FGameplayTag::RequestGameplayTag(FName(Args.Num() > 0 ? *Args[0] : TEXT("Equipment.Slot.MainHand")), false);
+				if (!Equipment || !SlotTag.IsValid())
+				{
+					UE_LOG(LogEQP, Warning, TEXT("Equipment.Sheathe: Usage: Equipment.Sheathe [SlotTag] (a player with equipment needed)."));
+					return;
+				}
+				UE_LOG(LogEQP, Log, TEXT("Equipment.Sheathe: %s = %s"), *SlotTag.ToString(), *UEnum::GetValueAsString(Equipment->TrySheathe(SlotTag)));
+			})
+	));
 }
 
 void FEquipmentPluginModule::ShutdownModule()

@@ -154,7 +154,23 @@ void UEquipmentSlotWidget::RefreshSlot()
 		return;
 	}
 
-	const FItemInstance EquippedItem = BoundEquipmentManager->GetEquippedItem(SlotTag);
+	// A hand shows what is in it: its own item, or dimmed, the weapon drawn from a sheath (the equipment sheathing plan).
+	FItemInstance EquippedItem = BoundEquipmentManager->GetEquippedItem(SlotTag);
+	bool bDrawnFromSheath = false;
+	if (!EquippedItem.IsValid())
+	{
+		const FGameplayTag Held = BoundEquipmentManager->GetHeldSlotTag(SlotTag);
+		if (Held.IsValid() && Held != SlotTag)
+		{
+			EquippedItem = BoundEquipmentManager->GetEquippedItem(Held);
+			bDrawnFromSheath = true;
+		}
+	}
+	ApplyBackgroundColor();
+	if (IconImage)
+	{
+		IconImage->SetColorAndOpacity(FLinearColor(1.f, 1.f, 1.f, bDrawnFromSheath ? 0.45f : 1.f));
+	}
 	if (!EquippedItem.IsValid())
 	{
 		if (IconImage)
@@ -263,17 +279,24 @@ FReply UEquipmentSlotWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
 void UEquipmentSlotWidget::SetHeld(bool bInHeld)
 {
 	bIsHeld = bInHeld;
+	ApplyBackgroundColor();
+}
 
+FLinearColor UEquipmentSlotWidget::BackgroundColorFor(bool bHeld, bool bDrawn)
+{
+	if (bHeld)
+	{
+		return FLinearColor(0.8f, 0.6f, 0.2f, 0.9f);
+	}
+	return bDrawn ? FLinearColor(0.2f, 0.42f, 0.7f, 0.9f) : FLinearColor(0.08f, 0.08f, 0.12f, 0.9f);
+}
+
+void UEquipmentSlotWidget::ApplyBackgroundColor()
+{
 	if (BackgroundImage)
 	{
-		if (bIsHeld)
-		{
-			BackgroundImage->SetColorAndOpacity(FLinearColor(0.8f, 0.6f, 0.2f, 0.9f));
-		}
-		else
-		{
-			BackgroundImage->SetColorAndOpacity(FLinearColor(0.08f, 0.08f, 0.12f, 0.9f));
-		}
+		const bool bDrawn = BoundEquipmentManager && BoundEquipmentManager->IsDrawn(SlotTag);
+		BackgroundImage->SetColorAndOpacity(BackgroundColorFor(bIsHeld, bDrawn));
 	}
 }
 

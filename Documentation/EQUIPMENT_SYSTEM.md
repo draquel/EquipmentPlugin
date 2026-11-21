@@ -1,6 +1,6 @@
 # Equipment System
 
-> State as of 2026-11-02 (code review CR5).
+> State as of 2026-11-11 (blocked hands, G175; sheaths, the equipment sheathing plan S1, 2026-11-08; before it code review CR5, 2026-11-02).
 
 ## Overview
 
@@ -27,14 +27,16 @@ a `UInventoryComponent`, and the slot widget shows `UItemTooltipWidget` (D-CR22,
 ### Slot Configuration vs Runtime State
 
 **`FEquipmentSlotDefinition`** (CommonGameFramework, configuration): `SlotTag`, `AcceptedItemTags`, `SlotDisplayName`,
-`AttachSocket`, `AttachOffset`. Set in `UEquipmentManagerComponent::AvailableSlots` on the owner.
+`AttachSocket`, `AttachOffset`, `DrawSlotTag` (set on a sheath: "Sheaths" below). Set in
+`UEquipmentManagerComponent::AvailableSlots` on the owner.
 
 **`FEquipmentSlot`** (runtime state, replicated): created from the definitions in `BeginPlay` on the authority; a client
 keeps the array the server sent, which arrives before its `BeginPlay` with whatever is equipped (G102: rebuilding it on
 the client emptied the slots of an actor that first replicated with items equipped, and the server never resent them).
 Holds `SlotTag`,
-`EquippedItem`, `bIsOccupied`, copies of `AttachSocket`, `AttachOffset` and `AcceptedItemTags`, and, not replicated, the
-attached visual component, its load handle, the attached light and the fuel accumulator. GAS handles are kept by the GAS
+`EquippedItem`, `bIsOccupied`, copies of `AttachSocket`, `AttachOffset`, `AcceptedItemTags` and `DrawSlotTag`, a sheath's
+`bDrawn`, and, not replicated, the attached visual component, its load handle, the attached light, the fuel accumulator
+and the drawn state this machine last acted on (`bAppliedDrawn`). GAS handles are kept by the GAS
 module per slot, not in the slot.
 
 ```
@@ -50,7 +52,8 @@ UEquipmentManagerComponent (on the character)
 
 ### Slot Matching
 
-`TryEquip(Item)` picks the slot with `FindTargetSlot(Item)` from the item's `UItemFragment_Equipment::EquipmentSlotTag`:
+`TryEquip(Item)` picks the slot with `FindTargetSlot(Item)` from the item's `UItemFragment_Equipment::SheathSlotTag` when
+the owner has such a sheath, else from its `EquipmentSlotTag` ("Sheaths" below), each matched the same way:
 
 ```
 1. an empty slot with exactly that tag
@@ -130,10 +133,13 @@ ApplyVisuals(Item, SlotTag):
        neither → no visual (ability-only equipment)
     3. Async load the mesh (FStreamableManager), handle kept on the slot
     4. On load (OnMeshLoaded): create the component with collision off, attach it to the owner's body mesh
-       (a character's GetMesh(), not the first skeletal mesh found) at the slot's AttachSocket,
-       SetRelativeTransform(GetVisualAttachOffset(SlotTag)), link AnimLayerClass if set, broadcast OnVisualAttached
+       (a character's GetMesh(), not the first skeletal mesh found) at GetVisualAttachSocket(SlotTag): the item's
+       AttachBoneOverride, else the slot's AttachSocket,
+       SetRelativeTransform(GetVisualAttachOffset(SlotTag)), remember the item's id (AttachedVisualItemId) and the
+       layer (AttachedAnimLayerClass) on the slot, link AnimLayerClass if set, broadcast OnVisualAttached
 
-RemoveVisuals(SlotTag): cancel the load, unlink AnimLayerClass, detach and destroy the component, drop the light
+RemoveVisuals(SlotTag): cancel the load, unlink the layer the visual's item linked (else the held item's), detach and
+destroy the component, drop the light
 ```
 
 **Collision off.** Visuals are cosmetic and are created with the `NoCollision` profile, no overlaps and no navigation
@@ -148,6 +154,15 @@ helmet rim) per slot. The item's offset is the per-item fit on top (the leather 
 re-attach visuals themselves, such as a first-person socket swap, apply `GetVisualAttachOffset` again after attaching.
 `SetSlotAttachOffset` changes a slot's correction at runtime and re-applies it (how the offsets were tuned in PIE).
 
+**An item's own bone.** An Equipment fragment's `AttachBoneOverride` attaches the item to another bone than its slot's
+(a bow equipped in the main hand rides `hand_l`): `ChooseAttachSocket` is the rule, `GetVisualAttachSocket` the bone a
+slot's visual uses, `GetItemAttachBone` the item's choice (None when it takes the slot's), and a torch's flame follows the
+same bone when there is no visual. On its own bone the slot's correction (tuned for the slot's bone) is not applied:
+`GetVisualAttachOffset` is the item's `AttachOffset` alone. Owners that re-attach visuals keep the item's bone in every
+view (VoxelCharacterPlugin's `UpdateEquipmentAttachments`, which also composes the owner's per-body correction for the
+bone after the fit: an item is fitted once to the Mannequin's hand, and a body shaped differently corrects every item on
+that bone in its appearance asset; the character refinement plan's D71). Test: `Equipment.Visuals.AttachBoneOverride`.
+
 **Animation layers.** An Equipment fragment's `AnimLayerClass` is linked on the owner mesh with `LinkAnimClassLayers`
 when the visual attaches and unlinked when it is removed, so a weapon can swap animation layers without the equipment
 system knowing the animations.
@@ -156,8 +171,95 @@ system knowing the animations.
 
 `EquipmentSlots` replicate with `OnRep_EquipmentSlots`. Each client compares the replicated slots with what it has
 attached: an occupied slot without a visual gets `ApplyVisuals`, an empty slot with one gets `RemoveVisuals`, an occupied
-light slot refreshes its light from the replicated durability. Then `OnEquipmentChanged` fires. Only item data
-replicates; every client loads meshes and builds components itself.
+slot whose visual was built for another item (`IsVisualStale`: the slot's `AttachedVisualItemId` is not its item's id)
+gets both, since a hotbar swap is an unequip and an equip in one server frame and reaches the client as one replication
+of an occupied slot holding another item (G153, 2026-11-08; before it the old mesh, its fit and its layer stayed under the
+new action set until the slot emptied), and an occupied
+light slot refreshes its light from the replicated durability (sent when it changes: "Durability" below, G136). Then
+`OnEquipmentChanged` fires. Only item data replicates; every client loads meshes and builds components itself. Test:
+`Equipment.Visuals.StaleAfterSwap`.
+
+---
+
+## Sheaths
+
+Weapons carried on the body and drawn into the hand when used (the equipment sheathing plan, 2026-11-08, D77-D82;
+`EQUIPMENT_SHEATHING_PLAN.md`).
+
+**The model (D77).** A sheath is a slot whose definition names a hand, `DrawSlotTag` (Equipment.Slot.MainHand for the
+character's `Equipment.Slot.Sheath.HipLeft`, `.Back`, `.Belt`). The item names its sheath and its fit there in its
+Equipment fragment (ItemInventoryPlugin): `SheathSlotTag` (a sheath or a parent of several), `SheathOffset`,
+`SheathBoneOverride`; `EquipmentSlotTag`, `AttachOffset` and `AttachBoneOverride` stay the hand it is used in and its fit
+there. The item lives in the sheath, always: drawn is the sheath slot's replicated `bDrawn`, so an item has one home and
+nothing is reserved or moved by a draw. `FEquipmentSlot::IsInHand()` is true for an ordinary slot's item and a drawn
+sheath's.
+
+- **Where an equip lands.** `FindTargetSlot` picks the item's sheath where the owner has one, else its
+  `EquipmentSlotTag` slot, so an owner without sheaths (the NPCs, another game) equips as before. An equip of a sheathable
+  item asked into its sheath's hand (the panel's Main Hand, an old save's main-hand entry) goes into the sheath, drawn
+  (`ResolveSheathTarget`, in `TryEquipToSlot` and `ValidateEquipFromInventory`). A sheath's item arrives sheathed.
+- **Draw and sheathe.** `TryDraw(SheathSlotTag, Inventory)` and `TrySheathe(SlotTag)` (the hand, or the sheath itself), each a request from a
+  client (`ServerRPC_RequestDraw`, `ServerRPC_RequestSheathe`) with one predicate on both sides, `ValidateDraw`
+  (D-CR16): `IncompatibleSlot` (no sheath, no such hand), `InvalidItem` (an empty sheath), `SlotOccupied` (the hand slot
+  itself holds an item and no inventory was given), `NoInventorySpace`. **One item per hand**: a draw sends the sheath
+  drawn into that hand back first and an item in the hand slot itself to the inventory; an item equipped into the hand
+  slot sheathes the drawn one. `TryEquipFromInventory(..., bDraw)` equips into the sheath and draws in one request (the
+  hotbar's F; the client's predicate checks the equip, the server the draw too). The manager flips the state when asked;
+  when (the montage's hand-off) is the owner's business.
+- **GAS follows the hand.** A sheath grants its item's abilities and effects while drawn and revokes them on the sheathe
+  (`SetDrawnInternal`); an ordinary slot grants on the equip as before. A belted pickaxe does not dig.
+- **Visuals.** `GetVisualAttachSocket` / `GetVisualAttachOffset` answer by the state: sheathed, the sheath's bone (or the
+  item's `SheathBoneOverride`) and `SheathOffset * sheath correction` (`SheathOffset` alone on its own bone); drawn, the
+  hand slot's bone (or `AttachBoneOverride`) and `AttachOffset * hand correction`, as if equipped in the hand.
+  `GetVisualAttachSocketForState` / `GetVisualAttachOffsetForState` answer for a given state, for owners that seat the
+  visual by their montage during the hand-off. The stance layer (`AnimLayerClass`) is linked while the item is in the
+  hand only (`RefreshSlotLayer`). A draw or a sheathe re-seats the same component (`ApplyHandState`): no mesh reload.
+- **Queries.** `GetHeldSlotTag(Hand)` (the hand slot when it holds an item, else the sheath drawn into it),
+  `GetHeldItem(Hand)`: what every caller asking "what is in the main hand" reads. `IsDrawn`, `IsSheathSlot`.
+- **Replication.** `bDrawn` replicates in the slot. `OnRep_EquipmentSlots` compares it with `bAppliedDrawn` and, on a
+  draw or a sheathe of the same item, re-seats the visual, links or unlinks the layer and fires `OnDrawnChanged(SlotTag,
+  bDrawn)` (every machine; the authority from `SetDrawnInternal`), then `OnEquipmentChanged` as always.
+- Console: `Equipment.Draw <SheathSlotTag>`, `Equipment.Sheathe [SlotTag]` (no animation). Tests `Equipment.Sheath.*`.
+
+**One item per place on the body (the sheath loadout plan, D95, 2026-11-11).** A sheath is one place on the body and,
+like every slot, holds one item: you can only equip what can be sheathed together. The character's back
+(`Equipment.Slot.Sheath.Back`) holds one of a bow, a two-handed weapon or a shield. The rule is the slot's occupancy,
+checked by the predicates both sides run (`ValidateEquipFromInventory` → `ValidateEquip`, D-CR16): an equip from the bag
+into an occupied sheath is a swap (the old item takes the new one's bag slot, so a full bag still swaps: the bow equipped
+sends the shield to the bag), and a direct equip with no inventory is refused (`SlotOccupied`, nothing dropped). **A
+sheath draws into its item's hand**: the item's `EquipmentSlotTag` when the owner has that hand as an ordinary slot, else
+the sheath definition's `DrawSlotTag` (`GetDrawHandFor`); the authority sets the slot's `DrawSlotTag` on the equip (the
+back holding a shield draws into the off hand) and puts the definition's back when it empties, and it replicates with the
+slot, so every reader of the drawn hand (`GetHeldItem`, the visual's bone and fit, the character's cycle) follows the
+item. A shield asked into the off hand (the panel, an old save) goes onto the back (`ResolveSheathTarget`).
+
+**The shield beside a one-handed weapon (D96).** An item whose fragment names `DrawWithSlotTag` follows that hand
+(`GetDrawLeadSlotTag`: the shield follows `Equipment.Slot.MainHand`): after every equip, unequip, draw and sheathe the
+authority reconciles the hands (`ReconcileHands`), and the shield is in its hand while the lead's hand holds an item that
+does not block its hand (a sword, not a pickaxe) and nothing else is in its hand (no torch), on its sheath otherwise. So
+the shield comes onto the arm when the sword is drawn and onto the back when it is sheathed or leaves; unarmed, it is on
+the back. Its state is its lead's: a draw of it is refused by `ValidateDraw` (`IncompatibleSlot`) and a sheathe by
+`TrySheathe` (`Failed`), on both sides; an equip asking for its draw leaves that to the reconcile. Its abilities and
+effects (its Defense) follow the hand as any sheath's. The swap is instant, at the sword's draw or sheathe: there is no
+montage for the shield. Being equipped is not coupled: a shield stays on the back when the sword goes to the bag.
+
+**A shared place (D97).** Two slots can share a place on the body: an item's Equipment fragment names the slot whose
+place it shares (`SharesPlaceWithSlotTag`) and the items that can be there with it (`SharesPlaceWithItemTags`, matched
+against the other item's definition tags). The character's quiver (`Equipment.Slot.Quiver`, on the back, its opening over
+the right shoulder blade) shares the back's sheath with a bow (`Item.Type.Bow`) only. `GetPlaceConflicts(Item, Slot)`
+names the slots whose items an equip would send off (either item's rule counts, the slot's own item is a swap, not a
+conflict). An equip from the bag sends them to the bag first, each step validated before it moves anything; the
+predicate both sides run (`ValidateEquipFromInventory`) refuses with `NoInventorySpace` when the bag cannot take them, and
+an equip with no bag is refused (`SlotOccupied`). So a shield or a two-hander onto the back sends the quiver to the bag,
+and the quiver sends a shield or a two-hander there; an empty back keeps the quiver. Test `Equipment.Sheath.SharedPlace`.
+
+**Blocked hands (G175).** An item can empty other hands while it is in its own: its Equipment fragment's
+`BlockedSlotTags` (the bow and the pickaxes name `Equipment.Slot.OffHand`: they need both hands). `GetBlockedSlotTags()`
+gathers them from every item in a hand, `IsSlotBlocked(Slot)` asks for one. A blocked hand takes nothing: a draw into it
+and an equip into a blocked hand slot itself are refused with `HandBlocked` (the predicates `ValidateDraw` and
+`ValidateEquip`, on both sides), a draw of a blocking item sends what the blocked hand slot itself holds (a torch) to
+the bag with the hand's own item, and the reconcile sheathes what is drawn into a blocked hand (the shield, when the
+pickaxe comes out). Tests `Equipment.Sheath.OnePerPlace`, `Equipment.Sheath.DrawsWithLead`.
 
 ---
 
@@ -168,6 +270,13 @@ definition's `UItemFragment_Durability`. `ApplyDurabilityLoss(SlotTag, Amount)` 
 `OnDurabilityChanged(SlotTag, Current, Max)`, and at zero with `bDestroyAtZero` unequips the item without returning it
 anywhere and broadcasts `OnItemBroken(SlotTag, Item)`. Callers decide what wears an item (VoxelCharacterPlugin's melee
 ability applies the weapon's `DegradeRate` per hit).
+
+The loss changes the slot's own item through `FItemInstance::EditFragment`, which bumps the item's fragment revision:
+`EquipmentSlots` is compared with its last sent state through `FItemInstance::Identical`, and that state shares the
+item's fragment objects, so before G136 a worn item (and a carried light's fuel) never reached a client, whose
+`GetDurability` kept the value the item was equipped with. Now the slot is sent, the client's copy gets the new value,
+and `OnRep_EquipmentSlots` refreshes a light and fires `OnEquipmentChanged`, which the slot widget follows.
+`OnDurabilityChanged` and `OnItemBroken` fire on the authority only.
 
 ## Carried Light
 
@@ -257,7 +366,9 @@ CLIENT                                   SERVER
 The request names an item by instance id; the server equips the item it holds under that id, so a client cannot equip
 an item it does not have (G91). `TryEquip` / `TryEquipToSlot` take a whole item and are server code only (a client gets
 `NotAuthorized`). RPCs from one connection arrive in order, so two equips to the same slot run one after the other: the
-second finds the slot occupied and swaps the first back into the inventory.
+second finds the slot occupied and swaps the first back into the inventory. A draw and a sheathe go the same way
+(`ServerRPC_RequestDraw`, `ServerRPC_RequestSheathe`; the inventory a draw names must be the requester's) and reach the
+other machines as the slot's replicated `bDrawn` ("Sheaths").
 
 ---
 
@@ -274,7 +385,10 @@ manager's changes and durability.
 
 - `NativeOnMouseButtonDown`: left click → `OnSlotClicked(SlotTag, EquipmentManager)`, right click →
   `OnSlotRightClicked`; both `FOnEquipmentSlotClicked(FGameplayTag SlotTag, UEquipmentManagerComponent* EquipmentManager)`.
-- `SetHeld(bool)`: gold `(0.8, 0.6, 0.2, 0.9)` while held by click-to-move, default `(0.08, 0.08, 0.12, 0.9)`.
+- `SetHeld(bool)`: gold `(0.8, 0.6, 0.2, 0.9)` while held by click-to-move, blue `(0.2, 0.42, 0.7, 0.9)` while the slot is a
+  sheath whose weapon is drawn, default `(0.08, 0.08, 0.12, 0.9)` (`BackgroundColorFor`).
+- A hand slot shows what is in the hand: its own item, or, dimmed, the weapon drawn from a sheath (`GetHeldSlotTag`); its
+  tooltip is that weapon's. The sheaths appear as slots of their own (from `AvailableSlots`, no code).
 - The icon starts `Collapsed`; `RefreshSlot()` makes it `SelfHitTestInvisible` while an item is equipped, so clicks reach
   the slot.
 
@@ -302,8 +416,9 @@ VoxelCharacterPlugin's `AVCPlayerController` binds the panel's delegates in `Bin
 
 ## Console Commands
 
-`Equipment.Equip <DefName> <SlotTag>` (creates the item and equips it to the player's empty slot; server or standalone)
-and `Equipment.UnequipAll`,
+`Equipment.Equip <DefName> <SlotTag>` (creates the item and equips it to the player's empty slot, a carried weapon asked
+into its hand going into its sheath drawn; server or standalone), `Equipment.UnequipAll`, `Equipment.Draw <SheathSlotTag>`
+and `Equipment.Sheathe [SlotTag]`,
 registered in `EquipmentPlugin.cpp`; `Documentation/EDITOR_CONSOLE_GUIDE.md` lists them with every project command.
 
 ## Tests
@@ -312,11 +427,24 @@ registered in `EquipmentPlugin.cpp`; `Documentation/EDITOR_CONSOLE_GUIDE.md` lis
 `Equip.FromInventorySwap` (a swap from a full bag keeps both items; a refused swap changes nothing),
 `Authority.ClientRequests` (a client's direct equip refused; its equip request delivered to the server as an instance
 id, simulated server/client with `CGFTesting::FRPCCall`; another player's inventory refused),
-`Durability.EmptySlotHasNone`, `LightSource.IntensityRule` / `NothingCarried`, and
+`Sheath.TargetSlot` (a carried weapon lands in its sheath, an owner without sheaths as before, a hand request into
+the sheath drawn), `Sheath.DrawAndSheathe` (the results, one item per hand, the hand slot's item to the bag),
+`Sheath.GASWhileDrawn`, `Sheath.AttachByState` (the bones and fits sheathed and drawn, the item's own bones),
+`Sheath.FromInventoryDraw` (equip and draw in one request, the old weapon kept in its sheath), `Sheath.ClientRequests`
+(the client's predicate and requests, `OnRep_EquipmentSlots` acting on a draw and a sheathe), `Sheath.OnePerPlace` (the
+back holds a bow or a shield: a direct equip refused, a swap from a full bag, the draw hand by the item, the client's
+swap request), `Sheath.DrawsWithLead` (the shield drawn and sheathed with the sword, on the back unarmed, beside a pickaxe
+and behind a torch, its own draw and sheathe refused on both sides, its GAS with the hand), `Sheath.SharedPlace` (the
+quiver beside the bow, sent to the bag by a shield and sending it, a direct equip and a full bag refused at home and on
+the server), `Sheath.SlotWidgetColour`,
+`Durability.EmptySlotHasNone`, `Durability.LossMarksTheItem` (the worn item is no longer `Identical` to its state
+before, G136), `LightSource.IntensityRule` / `NothingCarried`, and
 `GAS.ResolvesAbilitySystemThroughInterface` in the GAS module. VoxelCharacterPlugin's `VoxelCharacter.EquipmentLoop.*` tests cover
 the stat effect end to end. The equip flow above over a real connection (a dedicated server and a client in PIE: the
-request, the server's checks, the replicated slot and `OnRep_EquipmentSlots`, a rack's sword at its first replication)
-is the game module's `VoxelEngine.Replication.Framework`, run by the in-editor gate.
+request, the server's checks, the replicated slot and `OnRep_EquipmentSlots`, a rack's sword at its first replication,
+the equipped sword's durability worn on the server reaching the client's `GetDurability`, a dagger carried in a sheath
+drawn and sheathed at the client's request reaching the client in that state) is the game module's
+`VoxelEngine.Replication.Framework`, run by the in-editor gate.
 
 ---
 

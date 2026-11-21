@@ -1,6 +1,7 @@
 # EquipmentPlugin — Plugin Instructions
 
-> State as of 2026-11-02 (code review CR5).
+> State as of 2026-11-11 (one item per place, the sheath loadout plan; sheaths, the equipment sheathing plan; before
+> them code review CR5).
 
 ## Purpose
 
@@ -75,7 +76,19 @@ EquipmentPlugin/
 9. **Visuals and lights are rebuilt per machine** from the replicated `EquipmentSlots` in `OnRep_EquipmentSlots`; only
    item data replicates.
 10. **Fuel and durability change on the authority** (`ApplyDurabilityLoss`, `TickFuel`); clients follow the replicated
-   durability.
+   durability. A change to an equipped item's fragment goes through `EditFragment` on the slot's own item
+   (`Slot.EquippedItem`), never through a copy or a pointer `FindFragment` returned: only the revision it bumps tells
+   replication the item changed (G136).
+11. **Sheaths (D77).** A carried weapon lives in its sheath slot (`DrawSlotTag` set) and is drawn by a state, never moved
+   into the hand slot: one home per item. Ask the hand with `GetHeldSlotTag` / `GetHeldItem`, never `MainHand` alone; a
+   sheath's GAS and stance layer apply only while drawn; one item per hand (a draw sheathes the other, an equip into the
+   hand slot sheathes the drawn one). The manager knows no animation: owners decide when to call `TryDraw`.
+12. **One item per place on the body (D95, D96).** A sheath is a place and holds one item; there is no second slot for the
+   same place (the back holds a bow or a shield, not both). A sheath draws into its item's hand (`GetDrawHandFor`). An item
+   with `DrawWithSlotTag` (the shield) follows its lead in `ReconcileHands` and is never drawn or sheathed on its own.
+   `BlockedSlotTags` is the hands' rule (two-handed items), not the sheaths'. Two slots that share a place say so on the
+   item (`SharesPlaceWithSlotTag`, `SharesPlaceWithItemTags`: the quiver and the back, D97); `GetPlaceConflicts` names
+   what an equip sends to the bag, checked in the shared predicate.
 
 ## Build.cs Dependencies
 
@@ -93,7 +106,8 @@ PrivateDependencyModuleNames: EquipmentPlugin, ItemInventoryPlugin
 ## Logging, Commands and Tests
 
 - Log categories `LogEQP` (`EquipmentPlugin.h`) and `LogEQPGAS` (`EquipmentGASIntegration.h`).
-- Console commands `Equipment.Equip <DefName> <SlotTag>` and `Equipment.UnequipAll`
+- Console commands `Equipment.Equip <DefName> <SlotTag>`, `Equipment.UnequipAll`, `Equipment.Draw <SheathSlotTag>` and
+  `Equipment.Sheathe [SlotTag]`
   (`Documentation/EDITOR_CONSOLE_GUIDE.md`).
 - Tests under `Equipment.*` in each module's `Private/Tests/`, on the real `Equipment.Slot.*` tags; tests that need the
   item database use `CGFTesting::FTestGameInstance` (CommonGameFramework); `Equipment.Authority.ClientRequests` plays a
